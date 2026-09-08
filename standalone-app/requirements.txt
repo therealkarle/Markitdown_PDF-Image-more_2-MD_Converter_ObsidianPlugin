@@ -1,0 +1,4 @@
+markitdown
+google-generativeai
+python-dotenv
+PySide6

@@ -1,0 +1,10 @@
+{
+  "id": "markitdown-pro",
+  "name": "MarkItDown Pro",
+  "version": "1.0.0",
+  "minAppVersion": "0.15.0",
+  "description": "Convert files to Markdown using Microsoft MarkItDown and Gemini Vision.",
+  "author": "GitHub Copilot",
+  "authorUrl": "https://github.com/copilot",
+  "isDesktopOnly": true
+}
