@@ -30,7 +30,7 @@ class MarkItDownApp(QMainWindow):
         # API Key Section
         layout.addWidget(QLabel("Gemini API Key:"))
         self.api_key_input = QLineEdit()
-        self.api_key_input.setEchoMode(QLineEdit.Password)
+        self.api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.api_key_input.setText(os.getenv("GEMINI_API_KEY", ""))
         layout.addWidget(self.api_key_input)
         
@@ -40,7 +40,7 @@ class MarkItDownApp(QMainWindow):
 
         # Drag and Drop / File Selection
         self.label = QLabel("Drag and Drop a file here or click to select")
-        self.label.setAlignment(Qt.AlignCenter)
+        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label.setStyleSheet("border: 2px dashed #aaa; padding: 20px;")
         layout.addWidget(self.label)
 
