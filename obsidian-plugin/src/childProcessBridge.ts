@@ -1,20 +1,29 @@
-import { exec } from 'child_process';
-import * as path from 'path';
+import { execFile } from 'child_process';
+
+export interface ConversionOptions {
+    apiKey: string;
+    modelName: string;
+    promptOverride: string;
+    generatorPriority: string[];
+}
 
 export class ChildProcessBridge {
-    async convertFile(filePath: string, apiKey: string, scriptPath: string): Promise<string> {
+    async convertFile(filePath: string, options: ConversionOptions, scriptPath: string): Promise<string> {
         return new Promise((resolve, reject) => {
-            const command = `python "${scriptPath}" "${filePath}" "${apiKey}"`;
-            exec(command, (error, stdout, stderr) => {
-                if (error) {
-                    reject(`Error: ${error.message}`);
-                    return;
-                }
-                if (stderr) {
-                    console.warn(`Stderr: ${stderr}`);
-                }
-                resolve(stdout);
-            });
+            execFile(
+                'python',
+                [scriptPath, filePath, JSON.stringify(options)],
+                (error, stdout, stderr) => {
+                    if (error) {
+                        reject(`Error: ${error.message}`);
+                        return;
+                    }
+                    if (stderr) {
+                        console.warn(`Stderr: ${stderr}`);
+                    }
+                    resolve(stdout);
+                },
+            );
         });
     }
 }

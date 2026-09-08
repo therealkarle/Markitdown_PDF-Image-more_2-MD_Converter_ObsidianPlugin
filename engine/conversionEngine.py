@@ -10,28 +10,49 @@ except ImportError:
 
 
 class ConversionEngine:
-    def __init__(self, api_key: str | None = None):
-        if api_key:
-            self.api_key = api_key
-        else:
-            load_dotenv()
-            self.api_key = os.getenv("GEMINI_API_KEY")
+    """Converts documents using the configured generator priority order."""
 
-        if self.api_key and GENAI_AVAILABLE:
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model_name: str = "gemini-2.0-flash-lite-preview-02-05",
+        prompt_override: str = "",
+        generator_priority: list[str] | None = None,
+    ):
+        load_dotenv()
+        self.api_key = api_key or os.getenv("GEMINI_API_KEY")
+        self.model_name = model_name
+        self.prompt_override = prompt_override
+        self.generator_priority = generator_priority or ["gemini", "standard"]
+
+    def _create_converter(self, generator: str) -> MarkItDown:
+        if generator == "gemini":
+            if not self.api_key:
+                raise RuntimeError("No Gemini API key configured.")
+            if not GENAI_AVAILABLE:
+                raise RuntimeError("The google-generativeai package is not installed.")
+
             genai.configure(api_key=self.api_key)
-            self.md = MarkItDown(
-                llm_client=genai.GenerativeModel("gemini-1.5-flash"),
-                llm_model="gemini-1.5-flash",
+            model = genai.GenerativeModel(
+                self.model_name,
+                system_instruction=self.prompt_override or None,
             )
-        else:
-            self.md = MarkItDown()
+            return MarkItDown(llm_client=model, llm_model=self.model_name)
+
+        if generator == "standard":
+            return MarkItDown()
+
+        raise RuntimeError(f"Unknown Markdown generator: {generator}")
 
     def convert(self, file_path: str) -> str:
-        try:
-            result = self.md.convert(file_path)
-            return result.text_content
-        except Exception as e:
-            return f"Error: {str(e)}"
+        errors: list[str] = []
+        for generator in self.generator_priority:
+            try:
+                return self._create_converter(generator).convert(file_path).text_content
+            except Exception as error:
+                errors.append(f"{generator}: {error}")
+
+        return "Error: Conversion failed. " + " | ".join(errors)
 
 
 # CLI entry point — lets the engine be called directly:

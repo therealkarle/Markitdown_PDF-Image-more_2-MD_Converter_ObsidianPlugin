@@ -1,24 +1,13 @@
 import { Plugin, PluginSettingTab, Setting, Notice, App, TFile } from 'obsidian';
 import * as fs from 'fs';
 import * as path from 'path';
-import { ChildProcessBridge } from './childProcessBridge';
+import { ChildProcessBridge, ConversionOptions } from './childProcessBridge';
+import { DEFAULT_SETTINGS, MarkdownGenerator, PluginSettings } from './settings';
 
-interface MarkItDownSettings {
-    geminiApiKey: string;
-    modelName: string;
-    promptOverride: string;
-    footerTemplate: string;
-}
-
-const DEFAULT_SETTINGS: MarkItDownSettings = {
-    geminiApiKey: '',
-    modelName: 'gemini-2.0-flash-lite-preview-02-05',
-    promptOverride: '',
-    footerTemplate: '\n\n---\nConverted on {{date}} using {{model}}'
-};
+const SHARED_SETTINGS_FILE = 'markitdown-settings.json';
 
 export default class MarkItDownPlugin extends Plugin {
-    declare settings: MarkItDownSettings;
+    declare settings: PluginSettings;
     bridge!: ChildProcessBridge;
 
     async onload() {
@@ -40,7 +29,8 @@ export default class MarkItDownPlugin extends Plugin {
     }
 
     async loadSettings() {
-        this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+        const data = await this.loadData();
+        this.settings = { ...DEFAULT_SETTINGS, ...data };
     }
 
     async saveSettings() {
@@ -68,15 +58,31 @@ export default class MarkItDownPlugin extends Plugin {
             new Notice('No active file to convert.');
             return;
         }
+
         try {
             new Notice('Converting file...');
             const scriptPath = path.join(__dirname, '..', 'scripts', 'convert.py');
-            const result = await this.bridge.convertFile(activeFile.path, this.settings.geminiApiKey, scriptPath);
+
+            const conversionOptions: ConversionOptions = {
+                apiKey: this.settings.geminiApiKey,
+                modelName: this.settings.modelName,
+                promptOverride: this.settings.promptOverride,
+                generatorPriority: this.settings.generatorPriority,
+            };
+
+            const result = await this.bridge.convertFile(
+                activeFile.path,
+                conversionOptions,
+                scriptPath
+            );
+
             const footer = this.settings.footerTemplate
                 .replace('{{date}}', new Date().toISOString().split('T')[0])
                 .replace('{{model}}', this.settings.modelName);
+
             const output = result + footer;
             const outputPath = activeFile.path.replace(/\.[^.]+$/, '') + '.md';
+
             await this.app.vault.create(outputPath, output);
             new Notice('Conversion complete: ' + outputPath);
         } catch (error) {
@@ -97,6 +103,7 @@ class MarkItDownSettingTab extends PluginSettingTab {
     display(): void {
         const { containerEl } = this;
         containerEl.empty();
+
         containerEl.createEl('h2', { text: 'MarkItDown Pro Settings' });
 
         new Setting(containerEl)
@@ -142,6 +149,30 @@ class MarkItDownSettingTab extends PluginSettingTab {
                 .setValue(this.plugin.settings.footerTemplate)
                 .onChange(async (value) => {
                     this.plugin.settings.footerTemplate = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName('Generator Priority')
+            .setDesc('Determines the priority order of markdown generation methods.')
+            .addDropdown(dropdown => dropdown
+                .addOption('gemini → standard', 'Use Gemini then Standard')
+                .addOption('standard → gemini', 'Use Standard then Gemini')
+                .addOption('gemini', 'Use Gemini only')
+                .addOption('standard', 'Use Standard only')
+                .setValue(this.plugin.settings.generatorPriority.join(' → '))
+                .onChange(async (value) => {
+                    this.plugin.settings.generatorPriority = value.split(' → ') as MarkdownGenerator[];
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName('Use Separate Plugin Settings')
+            .setDesc('When enabled, settings for this plugin are separate from global settings.')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.useSeparatePluginSettings)
+                .onChange(async (value) => {
+                    this.plugin.settings.useSeparatePluginSettings = value;
                     await this.plugin.saveSettings();
                 }));
     }

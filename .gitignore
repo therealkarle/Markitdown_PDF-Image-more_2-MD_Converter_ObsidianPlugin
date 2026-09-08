@@ -37,3 +37,4 @@ venv/
 
 # Obsidian plugin specific files
 *.obsidian
+standalone-app/settings-mode.json
