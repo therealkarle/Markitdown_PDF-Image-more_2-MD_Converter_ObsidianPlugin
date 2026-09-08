@@ -1,10 +1,18 @@
 import { execFile } from 'child_process';
 
 export interface ConversionOptions {
+    // mode
+    mode: string;
+    // AI settings
     apiKey: string;
     modelName: string;
     promptOverride: string;
-    generatorPriority: string[];
+    aiMode: string;
+    // OCR settings
+    ocrPriority: string[];
+    tesseractLang: string;
+    azureOcrKey: string;
+    azureOcrEndpoint: string;
 }
 
 export class ChildProcessBridge {
