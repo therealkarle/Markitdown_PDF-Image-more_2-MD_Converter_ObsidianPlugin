@@ -1,0 +1,3 @@
+markitdown
+google-generativeai
+python-dotenv

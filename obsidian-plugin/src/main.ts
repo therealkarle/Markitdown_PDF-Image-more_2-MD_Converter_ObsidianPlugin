@@ -18,8 +18,8 @@ const DEFAULT_SETTINGS: MarkItDownSettings = {
 };
 
 export default class MarkItDownPlugin extends Plugin {
-    settings: MarkItDownSettings;
-    bridge: ChildProcessBridge;
+    declare settings: MarkItDownSettings;
+    bridge!: ChildProcessBridge;
 
     async onload() {
         await this.loadSettings();

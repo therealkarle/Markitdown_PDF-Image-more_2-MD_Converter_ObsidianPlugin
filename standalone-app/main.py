@@ -1,9 +1,13 @@
 import sys
 import os
-from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                             QPushButton, QLabel, QFileDialog, QTextEdit, QLineEdit)
+
+# Add the repo root to sys.path so the shared engine package is importable
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
+                               QPushButton, QLabel, QFileDialog, QTextEdit, QLineEdit)
 from PySide6.QtCore import Qt
-from conversionEngine import ConversionEngine
+from engine.conversionEngine import ConversionEngine
 from dotenv import load_dotenv, set_key
 
 class MarkItDownApp(QMainWindow):
