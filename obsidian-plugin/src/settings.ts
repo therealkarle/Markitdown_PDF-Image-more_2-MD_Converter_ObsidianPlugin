@@ -1,35 +1,43 @@
-export type MarkdownGenerator = 'standard' | 'gemini' | 'tesseract' | 'azure_ocr' | 'win_ocr';
-export type ConversionMode = 'simple' | 'ocr' | 'ai_enhanced';
-export type AiMode = 'fallback' | 'enhancement';
+export type OcrEngine = 'tesseract' | 'azure_ocr' | 'win_ocr';
 
 export interface PluginSettings {
-    // conversion mode
-    mode: ConversionMode;
-    // AI settings
+    // method toggles
+    useMarkitdown: boolean;
+    useOcr: boolean;
+    useAi: boolean;
+    // priority order of the three blocks
+    blockPriority: string[];
+    // OCR sub-engine priority
+    ocrPriority: OcrEngine[];
+    // AI extras
+    aiAutoDetect: boolean;
+    aiImprove: boolean;
+    // credentials & model
     geminiApiKey: string;
-    modelName: string;
-    promptOverride: string;
-    aiMode: AiMode;
-    // OCR settings
-    ocrPriority: MarkdownGenerator[];
-    tesseractLang: string;
     azureOcrKey: string;
     azureOcrEndpoint: string;
+    tesseractLang: string;
+    modelName: string;
+    promptOverride: string;
     // misc
     footerTemplate: string;
     useSeparatePluginSettings: boolean;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
-    mode: 'simple',
-    geminiApiKey: '',
-    modelName: 'gemini-2.0-flash-lite-preview-02-05',
-    promptOverride: '',
-    aiMode: 'fallback',
+    useMarkitdown: true,
+    useOcr: false,
+    useAi: false,
+    blockPriority: ['markitdown', 'ocr', 'ai'],
     ocrPriority: ['tesseract', 'azure_ocr'],
-    tesseractLang: 'deu+eng',
+    aiAutoDetect: false,
+    aiImprove: false,
+    geminiApiKey: '',
     azureOcrKey: '',
     azureOcrEndpoint: '',
+    tesseractLang: 'deu+eng',
+    modelName: 'gemini-2.0-flash-lite-preview-02-05',
+    promptOverride: '',
     footerTemplate: '\n\n---\nConverted on {{date}} using {{model}}',
     useSeparatePluginSettings: false,
 };

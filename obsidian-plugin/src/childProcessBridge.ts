@@ -1,18 +1,19 @@
 import { execFile } from 'child_process';
 
 export interface ConversionOptions {
-    // mode
-    mode: string;
-    // AI settings
-    apiKey: string;
-    modelName: string;
-    promptOverride: string;
-    aiMode: string;
-    // OCR settings
+    useMarkitdown: boolean;
+    useOcr: boolean;
+    useAi: boolean;
+    blockPriority: string[];
     ocrPriority: string[];
-    tesseractLang: string;
+    aiAutoDetect: boolean;
+    aiImprove: boolean;
+    geminiApiKey: string;
     azureOcrKey: string;
     azureOcrEndpoint: string;
+    tesseractLang: string;
+    modelName: string;
+    promptOverride: string;
 }
 
 export class ChildProcessBridge {
@@ -22,13 +23,8 @@ export class ChildProcessBridge {
                 'python',
                 [scriptPath, filePath, JSON.stringify(options)],
                 (error, stdout, stderr) => {
-                    if (error) {
-                        reject(`Error: ${error.message}`);
-                        return;
-                    }
-                    if (stderr) {
-                        console.warn(`Stderr: ${stderr}`);
-                    }
+                    if (error) { reject(`Error: ${error.message}`); return; }
+                    if (stderr) console.warn(`Stderr: ${stderr}`);
                     resolve(stdout);
                 },
             );

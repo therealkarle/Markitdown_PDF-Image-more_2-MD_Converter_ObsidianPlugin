@@ -4,7 +4,6 @@ import platform
 import sys
 from pathlib import Path
 
-# Add the repo root to sys.path so the shared engine package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from dotenv import load_dotenv, set_key
@@ -17,263 +16,245 @@ from PySide6.QtWidgets import (
 )
 from engine.conversionEngine import ConversionEngine
 
-# ─── Mode / option definitions ───────────────────────────────────────────────
+# ─── OCR sub-engine options ───────────────────────────────────────────────────
 
-MODE_LABELS = ["Simple (MarkItDown native)", "OCR", "AI Enhanced"]
-MODE_VALUES = ["simple", "ocr", "ai_enhanced"]
-
-AI_MODE_LABELS = [
-    "Fallback  (AI only when all others fail)",
-    "Enhancement  (AI improves every result)",
-]
-AI_MODE_VALUES = ["fallback", "enhancement"]
-
-# OCR engines, platform-aware
-_OCR_OPTIONS: list[tuple[str, str]] = [
+_OCR_ENGINES: list[tuple[str, str]] = [
     ("tesseract", "Tesseract  (local)"),
     ("azure_ocr", "Azure Computer Vision  (cloud)"),
 ]
 if platform.system() == "Windows":
-    _OCR_OPTIONS.append(("win_ocr", "Windows OCR  (local, Windows only)"))
+    _OCR_ENGINES.append(("win_ocr", "Windows OCR  (local, Windows only)"))
 
-OCR_ENGINE_IDS = [eid for eid, _ in _OCR_OPTIONS]
-OCR_ENGINE_LABELS = {eid: label for eid, label in _OCR_OPTIONS}
+OCR_ENGINE_IDS    = [eid for eid, _ in _OCR_ENGINES]
+OCR_ENGINE_LABELS = {eid: lbl for eid, lbl in _OCR_ENGINES}
+
+# The three top-level blocks, in their default priority order
+_BLOCKS = [
+    ("markitdown", "MarkItDown"),
+    ("ocr",        "OCR"),
+    ("ai",         "AI  (Gemini)"),
+]
 
 DEFAULT_SETTINGS: dict = {
-    # conversion mode
-    "mode": "simple",
-    # AI settings
-    "geminiApiKey": "",
-    "modelName": "gemini-2.0-flash-lite-preview-02-05",
-    "promptOverride": "",
-    "aiMode": "fallback",
-    # OCR settings
-    "ocrPriority": ["tesseract", "azure_ocr"],
-    "tesseractLang": "deu+eng",
-    "azureOcrKey": "",
-    "azureOcrEndpoint": "",
+    # which top-level blocks are enabled
+    "useMarkitdown": True,
+    "useOcr":        False,
+    "useAi":         False,
+    # priority order of blocks: list of block-ids
+    "blockPriority": ["markitdown", "ocr", "ai"],
+    # OCR sub-engine priority (subset of OCR_ENGINE_IDS)
+    "ocrPriority":   ["tesseract", "azure_ocr"],
+    # AI extras
+    "aiAutoDetect":  False,
+    "aiImprove":     False,
+    # credentials & model
+    "geminiApiKey":      "",
+    "azureOcrKey":       "",
+    "azureOcrEndpoint":  "",
+    "tesseractLang":     "deu+eng",
+    "modelName":         "gemini-2.0-flash-lite-preview-02-05",
+    "promptOverride":    "",
     # misc
     "footerTemplate": "\n\n---\nConverted on {{date}} using {{model}}",
 }
 
 
-# ─── Helpers ─────────────────────────────────────────────────────────────────
-
-def _build_generator_priority(settings: dict) -> list[str]:
-    """Translate mode + options into a generator_priority list for the engine."""
-    mode = settings.get("mode", "simple")
-    if mode == "simple":
-        return ["standard"]
-    if mode == "ocr":
-        ocr = list(settings.get("ocrPriority", ["tesseract"]))
-        return ocr if ocr else ["tesseract", "standard"]
-    if mode == "ai_enhanced":
-        ai_mode = settings.get("aiMode", "fallback")
-        ocr = list(settings.get("ocrPriority", ["tesseract"]))
-        if ai_mode == "enhancement":
-            # gemini runs as enhancement pass — put it first so the engine logic picks it up
-            return ["gemini"] + ocr
-        else:
-            # fallback: chain is ocr engines then gemini at the end
-            return ocr + ["gemini"]
-    return ["standard"]
+def _build_enabled_generators(s: dict) -> list[str]:
+    """
+    Translate the 3-block settings into a flat ordered generator list
+    that ConversionEngine.enabled_generators accepts.
+    """
+    result: list[str] = []
+    for block in s.get("blockPriority", ["markitdown", "ocr", "ai"]):
+        if block == "markitdown" and s.get("useMarkitdown", True):
+            result.append("markitdown")
+        elif block == "ocr" and s.get("useOcr", False):
+            for eid in s.get("ocrPriority", ["tesseract"]):
+                result.append(eid)
+        elif block == "ai" and s.get("useAi", False):
+            # Gemini as a plain fallback generator (ai_improve / ai_auto_detect
+            # are handled separately by ConversionEngine flags)
+            if not s.get("aiImprove", False) and not s.get("aiAutoDetect", False):
+                result.append("gemini")
+    return result or ["markitdown"]
 
 
-# ─── Main window ─────────────────────────────────────────────────────────────
+# ─── Main window ──────────────────────────────────────────────────────────────
 
 class MarkItDownApp(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("MarkItDown Pro Standalone")
-        self.setMinimumSize(760, 640)
+        self.setMinimumSize(740, 680)
 
-        self.env_path = Path(__file__).resolve().parent / ".env"
-        self.shared_settings_path = Path(__file__).resolve().parent.parent / "markitdown-settings.json"
-        self.local_settings_path = Path(__file__).resolve().parent / "markitdown-settings.json"
-        self.mode_path = Path(__file__).resolve().parent / "settings-mode.json"
+        self.env_path    = Path(__file__).resolve().parent / ".env"
+        self.shared_path = Path(__file__).resolve().parent.parent / "markitdown-settings.json"
+        self.local_path  = Path(__file__).resolve().parent / "markitdown-settings.json"
+        self.mode_path   = Path(__file__).resolve().parent / "settings-mode.json"
 
-        self.use_separate_settings: bool = self._load_mode()
-        self.settings: dict = self._load_settings()
+        self.use_separate: bool = self._load_separate_flag()
+        self.settings: dict     = self._load_settings()
         self.engine: ConversionEngine | None = None
 
         self._build_ui()
 
-    # ------------------------------------------------------------------ paths
+    # ── persistence ───────────────────────────────────────────────────────────
 
     @property
-    def _active_settings_path(self) -> Path:
-        return self.local_settings_path if self.use_separate_settings else self.shared_settings_path
+    def _settings_path(self) -> Path:
+        return self.local_path if self.use_separate else self.shared_path
 
-    # ---------------------------------------------------------------- persistence
-
-    def _load_mode(self) -> bool:
+    def _load_separate_flag(self) -> bool:
         try:
             return bool(json.loads(self.mode_path.read_text("utf-8")).get("useSeparateSettings", False))
         except (OSError, json.JSONDecodeError):
             return False
 
-    def _load_api_key(self) -> str:
+    def _load_env_key(self, var: str) -> str:
         if self.env_path.exists():
             load_dotenv(str(self.env_path), override=True)
-        return os.getenv("GEMINI_API_KEY", "")
+        return os.getenv(var, "")
 
-    def _load_azure_ocr_key(self) -> str:
-        if self.env_path.exists():
-            load_dotenv(str(self.env_path), override=True)
-        return os.getenv("AZURE_OCR_KEY", "")
-
-    def _save_api_key(self, key: str) -> None:
+    def _save_env_key(self, var: str, value: str) -> None:
         if not self.env_path.exists():
             self.env_path.touch()
-        set_key(str(self.env_path), "GEMINI_API_KEY", key)
-
-    def _save_azure_ocr_key(self, key: str) -> None:
-        if not self.env_path.exists():
-            self.env_path.touch()
-        set_key(str(self.env_path), "AZURE_OCR_KEY", key)
+        set_key(str(self.env_path), var, value)
 
     def _load_settings(self) -> dict:
-        settings = dict(DEFAULT_SETTINGS)
+        s = dict(DEFAULT_SETTINGS)
         try:
-            data = json.loads(self._active_settings_path.read_text("utf-8"))
-            data.pop("geminiApiKey", None)   # lives in .env only
-            data.pop("azureOcrKey", None)    # lives in .env only
-            settings.update(data)
+            data = json.loads(self._settings_path.read_text("utf-8"))
+            for k in ("geminiApiKey", "azureOcrKey"):
+                data.pop(k, None)
+            s.update(data)
         except (OSError, json.JSONDecodeError):
             pass
-        settings["geminiApiKey"] = self._load_api_key()
-        settings["azureOcrKey"] = self._load_azure_ocr_key()
-        return settings
+        s["geminiApiKey"] = self._load_env_key("GEMINI_API_KEY")
+        s["azureOcrKey"]  = self._load_env_key("AZURE_OCR_KEY")
+        return s
 
     def _save_settings(self) -> None:
-        to_save = {k: v for k, v in self.settings.items()
-                   if k not in ("geminiApiKey", "azureOcrKey")}
+        skip = {"geminiApiKey", "azureOcrKey"}
+        to_save = {k: v for k, v in self.settings.items() if k not in skip}
         try:
-            self._active_settings_path.parent.mkdir(parents=True, exist_ok=True)
-            self._active_settings_path.write_text(json.dumps(to_save, indent=2), "utf-8")
+            self._settings_path.parent.mkdir(parents=True, exist_ok=True)
+            self._settings_path.write_text(json.dumps(to_save, indent=2), "utf-8")
         except OSError as exc:
             QMessageBox.critical(self, "Cannot save settings", str(exc))
 
-    # ---------------------------------------------------------------- UI build
+    # ── UI build ──────────────────────────────────────────────────────────────
 
     def _build_ui(self) -> None:
         tabs = QTabWidget()
         self.setCentralWidget(tabs)
         tabs.addTab(self._build_converter_tab(), "Converter")
-        tabs.addTab(self._build_settings_tab(), "Settings")
+        tabs.addTab(self._build_settings_tab(),  "Settings")
 
     def _build_converter_tab(self) -> QWidget:
         w = QWidget()
-        layout = QVBoxLayout(w)
-
+        lay = QVBoxLayout(w)
         self.drop_label = QLabel('Drop a file here or click "Select file"')
         self.drop_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.drop_label.setStyleSheet(
-            "border: 2px dashed #aaa; padding: 30px; border-radius: 4px;"
-        )
-        layout.addWidget(self.drop_label)
-
-        select_btn = QPushButton("Select file")
-        select_btn.clicked.connect(self._on_select_file)
-        layout.addWidget(select_btn)
-
+        self.drop_label.setStyleSheet("border: 2px dashed #aaa; padding: 30px; border-radius: 4px;")
+        lay.addWidget(self.drop_label)
+        btn = QPushButton("Select file")
+        btn.clicked.connect(self._on_select_file)
+        lay.addWidget(btn)
         self.output_text = QTextEdit()
         self.output_text.setReadOnly(True)
-        self.output_text.setPlaceholderText("Conversion output will appear here...")
-        layout.addWidget(self.output_text)
-
+        self.output_text.setPlaceholderText("Conversion output will appear here…")
+        lay.addWidget(self.output_text)
         return w
 
     def _build_settings_tab(self) -> QWidget:
         w = QWidget()
-        layout = QVBoxLayout(w)
+        lay = QVBoxLayout(w)
 
-        # ── 1. Conversion Mode ────────────────────────────────────────────
-        mode_group = QGroupBox("Conversion Mode")
-        mode_layout = QFormLayout(mode_group)
+        # ── 1. Enable / priority ──────────────────────────────────────────────
+        top_group = QGroupBox("Methods — enable and set priority")
+        top_lay   = QVBoxLayout(top_group)
 
-        self.mode_input = QComboBox()
-        self.mode_input.addItems(MODE_LABELS)
-        self.mode_input.setCurrentIndex(self._mode_index(self.settings["mode"]))
-        self.mode_input.currentIndexChanged.connect(self._on_mode_changed)
-        mode_layout.addRow("Mode:", self.mode_input)
+        top_lay.addWidget(QLabel(
+            "Check the methods you want to use. Drag or use ▲▼ to set the fallback order."
+        ))
 
-        mode_desc = QLabel(
-            "<b>Simple</b> — MarkItDown native (PDF, Word, etc.)<br>"
-            "<b>OCR</b> — Tesseract / Azure Vision / Windows OCR fallback chain<br>"
-            "<b>AI Enhanced</b> — OCR + Gemini improvement (enhancement or fallback)"
-        )
-        mode_desc.setWordWrap(True)
-        mode_desc.setStyleSheet("color: grey; font-size: 11px;")
-        mode_layout.addRow(mode_desc)
-        layout.addWidget(mode_group)
+        row_w  = QWidget()
+        row_lay = QHBoxLayout(row_w)
+        row_lay.setContentsMargins(0, 0, 0, 0)
 
-        # ── 2. OCR Settings (visible for OCR + AI Enhanced) ───────────────
-        self.ocr_group = QGroupBox("OCR Settings")
-        ocr_layout = QFormLayout(self.ocr_group)
-
-        # Priority list with move-up/down buttons
-        ocr_list_row = QWidget()
-        ocr_list_layout = QHBoxLayout(ocr_list_row)
-        ocr_list_layout.setContentsMargins(0, 0, 0, 0)
-
-        self.ocr_priority_list = QListWidget()
-        self.ocr_priority_list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
-        self.ocr_priority_list.setMaximumHeight(100)
-        self._populate_ocr_list(self.settings.get("ocrPriority", OCR_ENGINE_IDS))
-        ocr_list_layout.addWidget(self.ocr_priority_list)
+        self.block_list = QListWidget()
+        self.block_list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.block_list.setFixedHeight(96)
+        self.block_list.itemChanged.connect(self._on_block_check_changed)
+        self._populate_block_list()
+        row_lay.addWidget(self.block_list)
 
         btn_col = QVBoxLayout()
-        up_btn = QPushButton("▲")
-        up_btn.setFixedWidth(28)
-        up_btn.clicked.connect(self._ocr_move_up)
-        down_btn = QPushButton("▼")
-        down_btn.setFixedWidth(28)
-        down_btn.clicked.connect(self._ocr_move_down)
-        btn_col.addWidget(up_btn)
-        btn_col.addWidget(down_btn)
+        for lbl, fn in [("▲", self._block_move_up), ("▼", self._block_move_down)]:
+            b = QPushButton(lbl)
+            b.setFixedWidth(28)
+            b.clicked.connect(fn)
+            btn_col.addWidget(b)
         btn_col.addStretch()
-        ocr_list_layout.addLayout(btn_col)
-        ocr_layout.addRow("Priority chain:", ocr_list_row)
+        row_lay.addLayout(btn_col)
+        top_lay.addWidget(row_w)
+        lay.addWidget(top_group)
 
-        self.tesseract_lang_input = QLineEdit()
-        self.tesseract_lang_input.setPlaceholderText("e.g. deu+eng")
-        self.tesseract_lang_input.setText(self.settings.get("tesseractLang", "deu+eng"))
-        ocr_layout.addRow("Tesseract language:", self.tesseract_lang_input)
+        # ── 2. OCR sub-options (shown when OCR checked) ───────────────────────
+        self.ocr_group = QGroupBox("OCR — sub-engine priority")
+        ocr_lay = QVBoxLayout(self.ocr_group)
 
-        self.azure_ocr_key_input = QLineEdit()
-        self.azure_ocr_key_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.azure_ocr_key_input.setPlaceholderText("Stored in standalone-app/.env")
-        self.azure_ocr_key_input.setText(self.settings.get("azureOcrKey", ""))
-        ocr_layout.addRow("Azure OCR Key:", self.azure_ocr_key_input)
+        ocr_row_w  = QWidget()
+        ocr_row_lay = QHBoxLayout(ocr_row_w)
+        ocr_row_lay.setContentsMargins(0, 0, 0, 0)
 
-        self.azure_ocr_endpoint_input = QLineEdit()
-        self.azure_ocr_endpoint_input.setPlaceholderText(
-            "https://<resource>.cognitiveservices.azure.com"
+        self.ocr_list = QListWidget()
+        self.ocr_list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.ocr_list.setFixedHeight(80)
+        self._populate_ocr_list(self.settings.get("ocrPriority", OCR_ENGINE_IDS))
+        ocr_row_lay.addWidget(self.ocr_list)
+
+        ocr_btn_col = QVBoxLayout()
+        for lbl, fn in [("▲", self._ocr_move_up), ("▼", self._ocr_move_down)]:
+            b = QPushButton(lbl)
+            b.setFixedWidth(28)
+            b.clicked.connect(fn)
+            ocr_btn_col.addWidget(b)
+        ocr_btn_col.addStretch()
+        ocr_row_lay.addLayout(ocr_btn_col)
+        ocr_lay.addWidget(ocr_row_w)
+
+        ocr_form = QFormLayout()
+        self.tess_lang_input = QLineEdit(self.settings.get("tesseractLang", "deu+eng"))
+        self.tess_lang_input.setPlaceholderText("e.g. deu+eng")
+        ocr_form.addRow("Tesseract language:", self.tess_lang_input)
+        self.azure_endpoint_input = QLineEdit(self.settings.get("azureOcrEndpoint", ""))
+        self.azure_endpoint_input.setPlaceholderText("https://<resource>.cognitiveservices.azure.com")
+        ocr_form.addRow("Azure endpoint:", self.azure_endpoint_input)
+        ocr_lay.addLayout(ocr_form)
+        lay.addWidget(self.ocr_group)
+
+        # ── 3. AI sub-options (shown when AI checked) ─────────────────────────
+        self.ai_group = QGroupBox("AI  (Gemini) — options")
+        ai_lay = QVBoxLayout(self.ai_group)
+
+        self.ai_auto_detect_cb = QCheckBox(
+            "Auto-Detect: Gemini inspects the file and picks the best method"
         )
-        self.azure_ocr_endpoint_input.setText(self.settings.get("azureOcrEndpoint", ""))
-        ocr_layout.addRow("Azure OCR Endpoint:", self.azure_ocr_endpoint_input)
+        self.ai_auto_detect_cb.setChecked(self.settings.get("aiAutoDetect", False))
+        ai_lay.addWidget(self.ai_auto_detect_cb)
 
-        layout.addWidget(self.ocr_group)
+        self.ai_improve_cb = QCheckBox(
+            "Improve: Gemini post-processes every result to clean up and improve quality"
+        )
+        self.ai_improve_cb.setChecked(self.settings.get("aiImprove", False))
+        ai_lay.addWidget(self.ai_improve_cb)
 
-        # ── 3. AI Settings (visible for AI Enhanced only) ─────────────────
-        self.ai_group = QGroupBox("AI Settings  (Gemini)")
-        ai_layout = QFormLayout(self.ai_group)
-
-        self.ai_mode_input = QComboBox()
-        self.ai_mode_input.addItems(AI_MODE_LABELS)
-        self.ai_mode_input.setCurrentIndex(self._ai_mode_index(self.settings.get("aiMode", "fallback")))
-        ai_layout.addRow("AI role:", self.ai_mode_input)
-
-        self.api_key_input = QLineEdit()
-        self.api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.api_key_input.setPlaceholderText("Stored in standalone-app/.env")
-        self.api_key_input.setText(self.settings.get("geminiApiKey", ""))
-        ai_layout.addRow("Gemini API Key:", self.api_key_input)
-
-        save_key_btn = QPushButton("Save API Keys to .env")
-        save_key_btn.clicked.connect(self._on_save_api_keys)
-        ai_layout.addRow(save_key_btn)
+        ai_form = QFormLayout()
+        self.gemini_key_input = QLineEdit(self.settings.get("geminiApiKey", ""))
+        self.gemini_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.gemini_key_input.setPlaceholderText("Stored in .env")
+        ai_form.addRow("Gemini API Key:", self.gemini_key_input)
 
         self.model_input = QComboBox()
         self.model_input.setEditable(True)
@@ -283,165 +264,223 @@ class MarkItDownApp(QMainWindow):
             "gemini-1.5-pro",
         ])
         self.model_input.setCurrentText(self.settings.get("modelName", "gemini-2.0-flash-lite-preview-02-05"))
-        ai_layout.addRow("Gemini model:", self.model_input)
+        ai_form.addRow("Model:", self.model_input)
 
         self.prompt_input = QTextEdit()
-        self.prompt_input.setFixedHeight(72)
-        self.prompt_input.setPlaceholderText("Optional system instructions for Gemini...")
+        self.prompt_input.setFixedHeight(60)
+        self.prompt_input.setPlaceholderText("Custom system instruction (leave empty for built-in prompt)…")
         self.prompt_input.setPlainText(self.settings.get("promptOverride", ""))
-        ai_layout.addRow("Prompt override:", self.prompt_input)
+        ai_form.addRow("Prompt override:", self.prompt_input)
+        ai_lay.addLayout(ai_form)
+        lay.addWidget(self.ai_group)
 
-        layout.addWidget(self.ai_group)
+        # ── 4. Credentials ────────────────────────────────────────────────────
+        cred_group = QGroupBox("Credentials  (stored in .env)")
+        cred_form  = QFormLayout(cred_group)
 
-        # ── 4. Settings Sync ──────────────────────────────────────────────
+        # Gemini key is already in AI group; Azure key here since it's also used without AI
+        self.azure_key_input = QLineEdit(self.settings.get("azureOcrKey", ""))
+        self.azure_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.azure_key_input.setPlaceholderText("Required for Azure Computer Vision")
+        cred_form.addRow("Azure OCR Key:", self.azure_key_input)
+
+        save_cred_btn = QPushButton("Save API Keys to .env")
+        save_cred_btn.clicked.connect(self._on_save_credentials)
+        cred_form.addRow(save_cred_btn)
+        lay.addWidget(cred_group)
+
+        # ── 5. Sync ───────────────────────────────────────────────────────────
         sync_group = QGroupBox("Settings Sync")
-        sync_layout = QFormLayout(sync_group)
-
-        self.separate_checkbox = QCheckBox("Use separate settings for standalone app")
-        self.separate_checkbox.setToolTip(
-            "When unchecked, settings are shared with the Obsidian plugin\n"
-            "(markitdown-settings.json in the repo root)."
-        )
-        self.separate_checkbox.setChecked(self.use_separate_settings)
-        self.separate_checkbox.toggled.connect(self._on_toggle_separate)
-        sync_layout.addRow(self.separate_checkbox)
-
+        sync_form  = QFormLayout(sync_group)
+        self.separate_cb = QCheckBox("Use separate settings file for standalone app")
+        self.separate_cb.setChecked(self.use_separate)
+        self.separate_cb.toggled.connect(self._on_toggle_separate)
+        sync_form.addRow(self.separate_cb)
         self.sync_label = QLabel(self._sync_description())
         self.sync_label.setWordWrap(True)
         self.sync_label.setStyleSheet("color: grey; font-size: 11px;")
-        sync_layout.addRow(self.sync_label)
-        layout.addWidget(sync_group)
+        sync_form.addRow(self.sync_label)
+        lay.addWidget(sync_group)
 
-        # ── 5. Save button ────────────────────────────────────────────────
+        # ── 6. Save ───────────────────────────────────────────────────────────
         save_btn = QPushButton("Save settings")
         save_btn.clicked.connect(self._on_save_settings)
-        layout.addWidget(save_btn)
+        lay.addWidget(save_btn)
+        lay.addStretch()
 
-        layout.addStretch()
-
-        # Initial visibility
-        self._update_section_visibility(MODE_VALUES[self.mode_input.currentIndex()])
-
+        # Apply initial sub-section visibility
+        self._update_subgroup_visibility()
         return w
 
-    # ---------------------------------------------------------------- OCR list helpers
+    # ── block list helpers ────────────────────────────────────────────────────
+
+    def _populate_block_list(self) -> None:
+        enabled_set = set()
+        if self.settings.get("useMarkitdown", True):
+            enabled_set.add("markitdown")
+        if self.settings.get("useOcr", False):
+            enabled_set.add("ocr")
+        if self.settings.get("useAi", False):
+            enabled_set.add("ai")
+
+        priority = self.settings.get("blockPriority", ["markitdown", "ocr", "ai"])
+        # Build ordered list: priority-ordered first, then any remaining
+        all_ids = [b[0] for b in _BLOCKS]
+        ordered = [bid for bid in priority if bid in all_ids]
+        ordered += [bid for bid in all_ids if bid not in ordered]
+
+        labels = {b[0]: b[1] for b in _BLOCKS}
+        self.block_list.blockSignals(True)
+        self.block_list.clear()
+        for bid in ordered:
+            item = QListWidgetItem(labels[bid])
+            item.setData(Qt.ItemDataRole.UserRole, bid)
+            item.setCheckState(
+                Qt.CheckState.Checked if bid in enabled_set else Qt.CheckState.Unchecked
+            )
+            self.block_list.addItem(item)
+        self.block_list.blockSignals(False)
+
+    def _block_priority(self) -> list[str]:
+        return [
+            self.block_list.item(i).data(Qt.ItemDataRole.UserRole)
+            for i in range(self.block_list.count())
+        ]
+
+    def _block_enabled(self, bid: str) -> bool:
+        for i in range(self.block_list.count()):
+            item = self.block_list.item(i)
+            if item.data(Qt.ItemDataRole.UserRole) == bid:
+                return item.checkState() == Qt.CheckState.Checked
+        return False
+
+    def _block_move_up(self) -> None:
+        row = self.block_list.currentRow()
+        if row > 0:
+            item = self.block_list.takeItem(row)
+            self.block_list.insertItem(row - 1, item)
+            self.block_list.setCurrentRow(row - 1)
+
+    def _block_move_down(self) -> None:
+        row = self.block_list.currentRow()
+        if row < self.block_list.count() - 1:
+            item = self.block_list.takeItem(row)
+            self.block_list.insertItem(row + 1, item)
+            self.block_list.setCurrentRow(row + 1)
+
+    # ── OCR list helpers ──────────────────────────────────────────────────────
 
     def _populate_ocr_list(self, priority: list[str]) -> None:
-        """Fill the OCR priority list. Engines in priority come first, then the rest unchecked."""
-        self.ocr_priority_list.clear()
+        self.ocr_list.clear()
         seen: set[str] = set()
         for eid in priority:
             if eid in OCR_ENGINE_LABELS:
                 item = QListWidgetItem(OCR_ENGINE_LABELS[eid])
                 item.setData(Qt.ItemDataRole.UserRole, eid)
                 item.setCheckState(Qt.CheckState.Checked)
-                self.ocr_priority_list.addItem(item)
+                self.ocr_list.addItem(item)
                 seen.add(eid)
-        for eid, label in _OCR_OPTIONS:
+        for eid, lbl in _OCR_ENGINES:
             if eid not in seen:
-                item = QListWidgetItem(label)
+                item = QListWidgetItem(lbl)
                 item.setData(Qt.ItemDataRole.UserRole, eid)
                 item.setCheckState(Qt.CheckState.Unchecked)
-                self.ocr_priority_list.addItem(item)
+                self.ocr_list.addItem(item)
 
     def _ocr_priority_value(self) -> list[str]:
         result = []
-        for i in range(self.ocr_priority_list.count()):
-            item = self.ocr_priority_list.item(i)
+        for i in range(self.ocr_list.count()):
+            item = self.ocr_list.item(i)
             if item and item.checkState() == Qt.CheckState.Checked:
                 result.append(item.data(Qt.ItemDataRole.UserRole))
         return result
 
     def _ocr_move_up(self) -> None:
-        row = self.ocr_priority_list.currentRow()
+        row = self.ocr_list.currentRow()
         if row > 0:
-            item = self.ocr_priority_list.takeItem(row)
-            self.ocr_priority_list.insertItem(row - 1, item)
-            self.ocr_priority_list.setCurrentRow(row - 1)
+            item = self.ocr_list.takeItem(row)
+            self.ocr_list.insertItem(row - 1, item)
+            self.ocr_list.setCurrentRow(row - 1)
 
     def _ocr_move_down(self) -> None:
-        row = self.ocr_priority_list.currentRow()
-        if row < self.ocr_priority_list.count() - 1:
-            item = self.ocr_priority_list.takeItem(row)
-            self.ocr_priority_list.insertItem(row + 1, item)
-            self.ocr_priority_list.setCurrentRow(row + 1)
+        row = self.ocr_list.currentRow()
+        if row < self.ocr_list.count() - 1:
+            item = self.ocr_list.takeItem(row)
+            self.ocr_list.insertItem(row + 1, item)
+            self.ocr_list.setCurrentRow(row + 1)
 
-    # ---------------------------------------------------------------- visibility
+    # ── visibility ────────────────────────────────────────────────────────────
 
-    def _update_section_visibility(self, mode: str) -> None:
-        self.ocr_group.setVisible(mode in ("ocr", "ai_enhanced"))
-        self.ai_group.setVisible(mode == "ai_enhanced")
+    def _update_subgroup_visibility(self) -> None:
+        self.ocr_group.setVisible(self._block_enabled("ocr"))
+        self.ai_group.setVisible(self._block_enabled("ai"))
 
-    # ---------------------------------------------------------------- helpers
-
-    @staticmethod
-    def _mode_index(mode: str) -> int:
-        try:
-            return MODE_VALUES.index(mode)
-        except ValueError:
-            return 0
-
-    @staticmethod
-    def _ai_mode_index(ai_mode: str) -> int:
-        try:
-            return AI_MODE_VALUES.index(ai_mode)
-        except ValueError:
-            return 0
+    # ── helpers ───────────────────────────────────────────────────────────────
 
     def _sync_description(self) -> str:
-        if self.use_separate_settings:
+        if self.use_separate:
             return "Saving to: standalone-app/markitdown-settings.json (standalone only)"
         return "Saving to: markitdown-settings.json (shared with Obsidian plugin)"
 
-    # ---------------------------------------------------------------- slots
+    def _collect_from_ui(self) -> None:
+        self.settings.update({
+            "useMarkitdown":    self._block_enabled("markitdown"),
+            "useOcr":           self._block_enabled("ocr"),
+            "useAi":            self._block_enabled("ai"),
+            "blockPriority":    self._block_priority(),
+            "ocrPriority":      self._ocr_priority_value(),
+            "aiAutoDetect":     self.ai_auto_detect_cb.isChecked(),
+            "aiImprove":        self.ai_improve_cb.isChecked(),
+            "geminiApiKey":     self.gemini_key_input.text().strip(),
+            "azureOcrKey":      self.azure_key_input.text().strip(),
+            "azureOcrEndpoint": self.azure_endpoint_input.text().strip(),
+            "tesseractLang":    self.tess_lang_input.text().strip(),
+            "modelName":        self.model_input.currentText().strip(),
+            "promptOverride":   self.prompt_input.toPlainText().strip(),
+        })
 
-    def _on_mode_changed(self, index: int) -> None:
-        self._update_section_visibility(MODE_VALUES[index])
+    # ── slots ─────────────────────────────────────────────────────────────────
 
-    def _on_save_api_keys(self) -> None:
-        gemini_key = self.api_key_input.text().strip()
-        azure_key = self.azure_ocr_key_input.text().strip()
-        self._save_api_key(gemini_key)
-        self._save_azure_ocr_key(azure_key)
-        self.settings["geminiApiKey"] = gemini_key
-        self.settings["azureOcrKey"] = azure_key
+    def _on_block_check_changed(self, _item: QListWidgetItem) -> None:
+        self._update_subgroup_visibility()
+
+    def _on_save_credentials(self) -> None:
+        gemini = self.gemini_key_input.text().strip()
+        azure  = self.azure_key_input.text().strip()
+        self._save_env_key("GEMINI_API_KEY", gemini)
+        self._save_env_key("AZURE_OCR_KEY",  azure)
+        self.settings["geminiApiKey"] = gemini
+        self.settings["azureOcrKey"]  = azure
         self.engine = None
-        self.output_text.setText("API Keys saved to .env.")
+        self.output_text.setText("API keys saved to .env.")
 
     def _on_save_settings(self) -> None:
-        mode = MODE_VALUES[self.mode_input.currentIndex()]
-        self.settings.update({
-            "mode": mode,
-            "modelName": self.model_input.currentText().strip(),
-            "promptOverride": self.prompt_input.toPlainText().strip(),
-            "aiMode": AI_MODE_VALUES[self.ai_mode_input.currentIndex()],
-            "ocrPriority": self._ocr_priority_value(),
-            "tesseractLang": self.tesseract_lang_input.text().strip(),
-            "azureOcrEndpoint": self.azure_ocr_endpoint_input.text().strip(),
-        })
+        self._collect_from_ui()
         self._save_settings()
         self.engine = None
-        self.output_text.setText(f"Settings saved to {self._active_settings_path.name}.")
+        self.output_text.setText(f"Settings saved to {self._settings_path.name}.")
 
     def _on_toggle_separate(self, separate: bool) -> None:
-        self.use_separate_settings = separate
+        self.use_separate = separate
         try:
             self.mode_path.write_text(json.dumps({"useSeparateSettings": separate}), "utf-8")
         except OSError as exc:
-            QMessageBox.critical(self, "Cannot save settings mode", str(exc))
+            QMessageBox.critical(self, "Cannot save mode", str(exc))
             return
         self.settings = self._load_settings()
-        # Reload UI fields
-        self.mode_input.setCurrentIndex(self._mode_index(self.settings["mode"]))
-        self.api_key_input.setText(self.settings.get("geminiApiKey", ""))
-        self.azure_ocr_key_input.setText(self.settings.get("azureOcrKey", ""))
-        self.azure_ocr_endpoint_input.setText(self.settings.get("azureOcrEndpoint", ""))
+        # Reload UI
+        self._populate_block_list()
+        self._populate_ocr_list(self.settings.get("ocrPriority", OCR_ENGINE_IDS))
+        self.ai_auto_detect_cb.setChecked(self.settings.get("aiAutoDetect", False))
+        self.ai_improve_cb.setChecked(self.settings.get("aiImprove", False))
+        self.gemini_key_input.setText(self.settings.get("geminiApiKey", ""))
+        self.azure_key_input.setText(self.settings.get("azureOcrKey", ""))
+        self.azure_endpoint_input.setText(self.settings.get("azureOcrEndpoint", ""))
+        self.tess_lang_input.setText(self.settings.get("tesseractLang", "deu+eng"))
         self.model_input.setCurrentText(self.settings.get("modelName", ""))
         self.prompt_input.setPlainText(self.settings.get("promptOverride", ""))
-        self.ai_mode_input.setCurrentIndex(self._ai_mode_index(self.settings.get("aiMode", "fallback")))
-        self._populate_ocr_list(self.settings.get("ocrPriority", OCR_ENGINE_IDS))
-        self.tesseract_lang_input.setText(self.settings.get("tesseractLang", "deu+eng"))
         self.sync_label.setText(self._sync_description())
+        self._update_subgroup_visibility()
 
     def _on_select_file(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(self, "Select file to convert")
@@ -449,37 +488,24 @@ class MarkItDownApp(QMainWindow):
             self._convert(file_path)
 
     def _convert(self, file_path: str) -> None:
-        # Collect current UI state into settings
-        mode = MODE_VALUES[self.mode_input.currentIndex()]
-        self.settings.update({
-            "mode": mode,
-            "geminiApiKey": self.api_key_input.text().strip(),
-            "modelName": self.model_input.currentText().strip(),
-            "promptOverride": self.prompt_input.toPlainText().strip(),
-            "aiMode": AI_MODE_VALUES[self.ai_mode_input.currentIndex()],
-            "ocrPriority": self._ocr_priority_value(),
-            "tesseractLang": self.tesseract_lang_input.text().strip(),
-            "azureOcrKey": self.azure_ocr_key_input.text().strip(),
-            "azureOcrEndpoint": self.azure_ocr_endpoint_input.text().strip(),
-        })
+        self._collect_from_ui()
 
-        generator_priority = _build_generator_priority(self.settings)
-
-        # For AI Enhanced mode the engine needs to know the ai_mode
-        ai_mode = self.settings.get("aiMode", "fallback") if mode == "ai_enhanced" else "fallback"
+        enabled_generators = _build_enabled_generators(self.settings)
+        use_ai = self.settings.get("useAi", False)
 
         self.engine = ConversionEngine(
-            api_key=self.settings["geminiApiKey"],
-            model_name=self.settings["modelName"],
-            prompt_override=self.settings["promptOverride"],
-            generator_priority=generator_priority,
-            ai_mode=ai_mode,
+            enabled_generators=enabled_generators,
+            ai_improve=use_ai and self.settings.get("aiImprove", False),
+            ai_auto_detect=use_ai and self.settings.get("aiAutoDetect", False),
+            api_key=self.settings.get("geminiApiKey") or None,
+            model_name=self.settings.get("modelName", "gemini-2.0-flash-lite-preview-02-05"),
+            prompt_override=self.settings.get("promptOverride", ""),
             azure_ocr_key=self.settings.get("azureOcrKey") or None,
             azure_ocr_endpoint=self.settings.get("azureOcrEndpoint") or None,
             tesseract_lang=self.settings.get("tesseractLang", "deu+eng"),
         )
 
-        self.output_text.setText(f"Converting {Path(file_path).name}...")
+        self.output_text.setText(f"Converting {Path(file_path).name}…")
         QApplication.processEvents()
         self.output_text.setText(self.engine.convert(file_path))
 
