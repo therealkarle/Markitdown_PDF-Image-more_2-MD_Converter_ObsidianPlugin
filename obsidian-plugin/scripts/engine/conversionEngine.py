@@ -25,6 +25,7 @@ Generator IDs
 "gemini"      — Google Gemini  (requires google-genai + API key)
 """
 
+import base64
 import os
 import shutil
 import subprocess
@@ -71,17 +72,95 @@ except ImportError:
 
 
 class _GeminiModelAdapter:
-    """Expose the legacy ``generate_content`` shape used by MarkItDown."""
+    """Adapt the Google Gen AI client to MarkItDown's LLM client shape.
+
+    Recent MarkItDown releases use the OpenAI-compatible
+    ``client.chat.completions.create`` API for image descriptions, while older
+    releases used ``generate_content`` directly.  Keep both entry points so
+    the plugin remains compatible with either version.
+    """
 
     def __init__(self, engine, system_instruction=None):
         self.engine = engine
         self.system_instruction = system_instruction
+        self.chat = _GeminiChat(self)
 
     def generate_content(self, contents):
         return self.engine._generate_gemini_content(
             contents,
             system_instruction=self.system_instruction,
         )
+
+    def _create_chat_completion(self, model, messages):
+        response = self.engine._generate_gemini_content(
+            self._messages_to_gemini_contents(messages),
+            system_instruction=self.system_instruction,
+            model=model,
+        )
+        return _ChatCompletionResponse(getattr(response, "text", ""))
+
+    @staticmethod
+    def _messages_to_gemini_contents(messages):
+        """Convert OpenAI-style multimodal messages to Gemini contents."""
+        contents = []
+        for message in messages:
+            parts = []
+            raw_content = message.get("content", "")
+            items = raw_content if isinstance(raw_content, list) else [{
+                "type": "text",
+                "text": raw_content,
+            }]
+
+            for item in items:
+                if item.get("type") == "text":
+                    parts.append({"text": item.get("text", "")})
+                    continue
+
+                if item.get("type") != "image_url":
+                    continue
+                image_url = item.get("image_url", {}).get("url", "")
+                if image_url.startswith("data:"):
+                    header, encoded = image_url.split(",", 1)
+                    mime_type = header[5:].split(";", 1)[0] or "application/octet-stream"
+                    parts.append({
+                        "inline_data": {
+                            "mime_type": mime_type,
+                            "data": base64.b64decode(encoded),
+                        }
+                    })
+                elif image_url:
+                    parts.append({"file_data": {"file_uri": image_url}})
+
+            if parts:
+                contents.append({
+                    "role": "model" if message.get("role") == "assistant" else "user",
+                    "parts": parts,
+                })
+        return contents
+
+
+class _GeminiChat:
+    def __init__(self, adapter):
+        self.completions = _GeminiChatCompletions(adapter)
+
+
+class _GeminiChatCompletions:
+    def __init__(self, adapter):
+        self.adapter = adapter
+
+    def create(self, model, messages, **_kwargs):
+        return self.adapter._create_chat_completion(model, messages)
+
+
+class _ChatCompletionResponse:
+    def __init__(self, text):
+        self.choices = [
+            type(
+                "_ChatChoice",
+                (),
+                {"message": type("_ChatMessage", (), {"content": text})()},
+            )()
+        ]
 
 # ── Image helpers ─────────────────────────────────────────────────────────────
 
@@ -334,7 +413,7 @@ class ConversionEngine:
 
         return _asyncio.run(_async_ocr(file_path))
 
-    def _generate_gemini_content(self, contents, system_instruction=None):
+    def _generate_gemini_content(self, contents, system_instruction=None, model=None):
         """Generate content through the current Google Gen AI client API."""
         if not self.api_key:
             raise RuntimeError("No Gemini API key configured.")
@@ -344,7 +423,7 @@ class ConversionEngine:
         client = genai.Client(api_key=self.api_key)
         try:
             kwargs = {
-                "model": self.model_name,
+                "model": model or self.model_name,
                 "contents": contents,
             }
             if system_instruction:

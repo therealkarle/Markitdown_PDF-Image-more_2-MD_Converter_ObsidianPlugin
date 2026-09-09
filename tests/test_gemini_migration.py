@@ -15,6 +15,21 @@ class _FakeResponse:
         self.text = text
 
 
+class _AdapterEngine:
+    def __init__(self):
+        self.calls = []
+
+    def _generate_gemini_content(self, contents, system_instruction=None, model=None):
+        self.calls.append(
+            {
+                "contents": contents,
+                "system_instruction": system_instruction,
+                "model": model,
+            }
+        )
+        return _FakeResponse("image description")
+
+
 class _FakeModels:
     def __init__(self):
         self.calls = []
@@ -90,6 +105,41 @@ class GeminiMigrationTests(unittest.TestCase):
         self.assertEqual(
             call["config"].system_instruction,
             "Keep the content intact.",
+        )
+
+    def test_markitdown_chat_completion_adapter_converts_image_messages(self):
+        engine = _AdapterEngine()
+        adapter = self.module._GeminiModelAdapter(
+            engine,
+            system_instruction="Describe the image.",
+        )
+
+        result = adapter.chat.completions.create(
+            model="test-model",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Write a caption."},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "data:image/png;base64,AAE="},
+                        },
+                    ],
+                }
+            ],
+        )
+
+        self.assertEqual(result.choices[0].message.content, "image description")
+        self.assertEqual(len(engine.calls), 1)
+        call = engine.calls[0]
+        self.assertEqual(call["model"], "test-model")
+        self.assertEqual(call["system_instruction"], "Describe the image.")
+        self.assertEqual(call["contents"][0]["role"], "user")
+        self.assertEqual(call["contents"][0]["parts"][0], {"text": "Write a caption."})
+        self.assertEqual(
+            call["contents"][0]["parts"][1],
+            {"inline_data": {"mime_type": "image/png", "data": b"\x00\x01"}},
         )
 
 

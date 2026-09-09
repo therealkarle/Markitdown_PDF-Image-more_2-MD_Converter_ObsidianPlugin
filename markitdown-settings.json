@@ -1,7 +1,7 @@
 {
   "useMarkitdown": true,
   "useOcr": true,
-  "useAi": true,
+  "useAi": false,
   "blockPriority": [
     "markitdown",
     "ocr",
