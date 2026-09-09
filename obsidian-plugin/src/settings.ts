@@ -17,6 +17,7 @@ export interface PluginSettings {
     azureOcrKey: string;
     azureOcrEndpoint: string;
     tesseractLang: string;
+    tesseractCmd: string;
     modelName: string;
     promptOverride: string;
     // misc
@@ -36,6 +37,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
     azureOcrKey: '',
     azureOcrEndpoint: '',
     tesseractLang: 'deu+eng',
+    tesseractCmd: '',
     modelName: 'gemini-2.0-flash-lite-preview-02-05',
     promptOverride: '',
     footerTemplate: '\n\n---\nConverted on {{date}} using {{model}}',

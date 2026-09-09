@@ -19,14 +19,17 @@ ai_auto_detect : bool
 Generator IDs
 -------------
 "markitdown"  — MarkItDown native (best for PDF, Word, HTML, …)
-"tesseract"   — Tesseract OCR  (requires pytesseract + system binary)
+"tesseract"   — Tesseract OCR  (requires the native system binary)
 "azure_ocr"   — Azure Computer Vision  (requires azure-ai-vision-imageanalysis + key/endpoint)
 "win_ocr"     — Windows.Media.Ocr  (Windows 10 1803+, requires winrt package)
 "gemini"      — Google Gemini  (requires google-genai + API key)
 """
 
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
 import platform
 from pathlib import Path
 from markitdown import MarkItDown
@@ -40,13 +43,6 @@ try:
     GENAI_AVAILABLE = True
 except ImportError:
     GENAI_AVAILABLE = False
-
-try:
-    import pytesseract
-    from PIL import Image as _PILImage
-    TESSERACT_AVAILABLE = True
-except ImportError:
-    TESSERACT_AVAILABLE = False
 
 try:
     from azure.ai.vision.imageanalysis import ImageAnalysisClient
@@ -102,6 +98,39 @@ def _to_pil_images(file_path: str) -> list:
     return [PILImage.open(file_path)]
 
 
+def _resolve_tesseract_command(configured_command: str | None = None) -> str:
+    """Find the Tesseract executable even when the host process has no PATH entry."""
+    configured = configured_command or os.getenv("TESSERACT_CMD")
+    candidates: list[Path] = []
+
+    if configured:
+        configured_path = Path(os.path.expandvars(configured)).expanduser()
+        candidates.append(
+            configured_path / "tesseract.exe"
+            if configured_path.is_dir()
+            else configured_path
+        )
+
+    from_path = shutil.which("tesseract")
+    if from_path:
+        candidates.append(Path(from_path))
+
+    for root_name in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
+        root = os.getenv(root_name)
+        if root:
+            candidates.append(Path(root) / "Tesseract-OCR" / "tesseract.exe")
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate.resolve())
+
+    searched = ", ".join(str(candidate) for candidate in candidates) or "PATH"
+    raise RuntimeError(
+        "Tesseract executable not found. Install Tesseract or set TESSERACT_CMD "
+        f"to the tesseract.exe path (searched: {searched})."
+    )
+
+
 # ── Engine ────────────────────────────────────────────────────────────────────
 
 class ConversionEngine:
@@ -149,6 +178,7 @@ class ConversionEngine:
         azure_ocr_key: str | None = None,
         azure_ocr_endpoint: str | None = None,
         tesseract_lang: str = "deu+eng",
+        tesseract_cmd: str | None = None,
     ):
         load_dotenv()
         self.enabled_generators = enabled_generators or ["markitdown"]
@@ -160,6 +190,7 @@ class ConversionEngine:
         self.azure_ocr_key = azure_ocr_key or os.getenv("AZURE_OCR_KEY")
         self.azure_ocr_endpoint = azure_ocr_endpoint or os.getenv("AZURE_OCR_ENDPOINT")
         self.tesseract_lang = tesseract_lang
+        self.tesseract_cmd = tesseract_cmd
 
     # ── Individual generators ─────────────────────────────────────────────────
 
@@ -167,14 +198,71 @@ class ConversionEngine:
         return MarkItDown().convert(file_path).text_content
 
     def _run_tesseract(self, file_path: str) -> str:
-        if not TESSERACT_AVAILABLE:
-            raise RuntimeError("pytesseract or Pillow is not installed.")
-        images = _to_pil_images(file_path)
-        pages = [
-            pytesseract.image_to_string(img, lang=self.tesseract_lang)
-            for img in images
+        command = _resolve_tesseract_command(self.tesseract_cmd)
+        try:
+            language_output = subprocess.run(
+                [command, "--list-langs"],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=30,
+            ).stdout
+        except Exception as error:
+            raise RuntimeError(
+                f"Tesseract could not be started at '{command}': {error}"
+            ) from error
+
+        available_languages = {
+            line.strip()
+            for line in language_output.splitlines()
+            if line.strip() and not line.startswith("List of available languages")
+        }
+        requested_languages = [
+            language.strip()
+            for language in self.tesseract_lang.replace(",", "+").split("+")
+            if language.strip()
         ]
+        missing_languages = [
+            language
+            for language in requested_languages
+            if language not in available_languages
+        ]
+        if missing_languages:
+            available = ", ".join(sorted(available_languages))
+            raise RuntimeError(
+                "Tesseract language data not found: "
+                f"{', '.join(missing_languages)}. Available languages: {available}"
+            )
+
+        try:
+            suffix = Path(file_path).suffix.lower()
+            if suffix != ".pdf":
+                pages = [self._run_tesseract_cli(command, file_path)]
+            else:
+                images = _to_pil_images(file_path)
+                with tempfile.TemporaryDirectory(prefix="markitdown-ocr-") as temp_dir:
+                    pages = []
+                    for index, image in enumerate(images, start=1):
+                        image_path = Path(temp_dir) / f"page-{index}.png"
+                        image.save(image_path, format="PNG")
+                        pages.append(self._run_tesseract_cli(command, str(image_path)))
+        except Exception as error:
+            raise RuntimeError(f"Tesseract OCR failed: {error}") from error
         return "\n\n---\n\n".join(pages)
+
+    def _run_tesseract_cli(self, command: str, file_path: str) -> str:
+        """Run the native Tesseract CLI without requiring pytesseract."""
+        result = subprocess.run(
+            [command, file_path, "stdout", "-l", self.tesseract_lang],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        if result.returncode != 0:
+            details = (result.stderr or result.stdout).strip()
+            raise RuntimeError(details or f"process exited with code {result.returncode}")
+        return result.stdout.strip()
 
     def _run_azure_ocr(self, file_path: str) -> str:
         if not AZURE_OCR_AVAILABLE:
@@ -379,7 +467,11 @@ class ConversionEngine:
         base_result: str | None = None
         for gen_id in chain:
             try:
-                base_result = self._run_generator(gen_id, file_path)
+                result = self._run_generator(gen_id, file_path)
+                if not result or not result.strip():
+                    errors.append(f"{gen_id}: No text extracted.")
+                    continue
+                base_result = result
                 break
             except Exception as e:
                 errors.append(f"{gen_id}: {e}")
@@ -390,7 +482,9 @@ class ConversionEngine:
         # Step 3 — AI improve (optional post-process)
         if self.ai_improve:
             try:
-                return self._run_gemini_improve(base_result)
+                improved_result = self._run_gemini_improve(base_result)
+                if improved_result and improved_result.strip():
+                    return improved_result
             except Exception as e:
                 errors.append(f"ai_improve: {e}")
                 # Return base result if improvement fails

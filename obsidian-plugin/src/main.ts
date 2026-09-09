@@ -74,6 +74,7 @@ export default class MarkItDownPlugin extends Plugin {
                 azureOcrKey:     this.settings.azureOcrKey,
                 azureOcrEndpoint: this.settings.azureOcrEndpoint,
                 tesseractLang:   this.settings.tesseractLang,
+                tesseractCmd:    this.settings.tesseractCmd,
                 modelName:       this.settings.modelName,
                 promptOverride:  this.settings.promptOverride,
             };
@@ -171,6 +172,13 @@ class MarkItDownSettingTab extends PluginSettingTab {
             .addText(t => t.setPlaceholder('deu+eng')
                 .setValue(this.plugin.settings.tesseractLang)
                 .onChange(async v => { this.plugin.settings.tesseractLang = v; await this.plugin.saveSettings(); }));
+
+        new Setting(this.ocrSection)
+            .setName('Tesseract executable')
+            .setDesc('Optional full path to tesseract.exe. Leave empty for automatic detection.')
+            .addText(t => t.setPlaceholder('C:\\Program Files\\Tesseract-OCR\\tesseract.exe')
+                .setValue(this.plugin.settings.tesseractCmd)
+                .onChange(async v => { this.plugin.settings.tesseractCmd = v; await this.plugin.saveSettings(); }));
 
         new Setting(this.ocrSection)
             .setName('Azure OCR Endpoint')

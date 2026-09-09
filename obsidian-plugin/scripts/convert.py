@@ -35,6 +35,7 @@ def convert_file(file_path: str, s: dict) -> str:
         azure_ocr_key=s.get("azureOcrKey") or None,
         azure_ocr_endpoint=s.get("azureOcrEndpoint") or None,
         tesseract_lang=s.get("tesseractLang", "deu+eng"),
+        tesseract_cmd=s.get("tesseractCmd") or None,
     )
     result = engine.convert(file_path)
     if result.lstrip().startswith("Error:"):

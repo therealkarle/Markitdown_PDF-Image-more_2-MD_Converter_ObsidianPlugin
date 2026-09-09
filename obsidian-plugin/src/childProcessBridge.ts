@@ -12,6 +12,7 @@ export interface ConversionOptions {
     azureOcrKey: string;
     azureOcrEndpoint: string;
     tesseractLang: string;
+    tesseractCmd: string;
     modelName: string;
     promptOverride: string;
 }

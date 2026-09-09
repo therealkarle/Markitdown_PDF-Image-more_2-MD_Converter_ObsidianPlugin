@@ -53,6 +53,7 @@ DEFAULT_SETTINGS: dict = {
     "azureOcrKey":       "",
     "azureOcrEndpoint":  "",
     "tesseractLang":     "deu+eng",
+    "tesseractCmd":      "",
     "modelName":         "gemini-2.0-flash-lite-preview-02-05",
     "promptOverride":    "",
     # misc
@@ -510,33 +511,34 @@ class MarkItDownApp(QMainWindow):
             self._convert(file_path)
 
     def _convert(self, file_path: str) -> None:
-        self._collect_from_ui()
-
-        enabled_generators = _build_enabled_generators(self.settings)
-        use_ai = self.settings.get("useAi", False)
-
-        self.engine = ConversionEngine(
-            enabled_generators=enabled_generators,
-            ai_improve=use_ai and self.settings.get("aiImprove", False),
-            ai_auto_detect=use_ai and self.settings.get("aiAutoDetect", False),
-            api_key=self.settings.get("geminiApiKey") or None,
-            model_name=self.settings.get("modelName", "gemini-2.0-flash-lite-preview-02-05"),
-            prompt_override=self.settings.get("promptOverride", ""),
-            azure_ocr_key=self.settings.get("azureOcrKey") or None,
-            azure_ocr_endpoint=self.settings.get("azureOcrEndpoint") or None,
-            tesseract_lang=self.settings.get("tesseractLang", "deu+eng"),
-        )
-
         try:
-            self.output_text.setText(f"Converting {Path(file_path).name}…")
+            self.output_text.setPlainText(f"Converting {Path(file_path).name}…")
             QApplication.processEvents()
+            self._collect_from_ui()
+            enabled_generators = _build_enabled_generators(self.settings)
+            use_ai = self.settings.get("useAi", False)
+
+            self.engine = ConversionEngine(
+                enabled_generators=enabled_generators,
+                ai_improve=use_ai and self.settings.get("aiImprove", False),
+                ai_auto_detect=use_ai and self.settings.get("aiAutoDetect", False),
+                api_key=self.settings.get("geminiApiKey") or None,
+                model_name=self.settings.get("modelName", "gemini-2.0-flash-lite-preview-02-05"),
+                prompt_override=self.settings.get("promptOverride", ""),
+                azure_ocr_key=self.settings.get("azureOcrKey") or None,
+                azure_ocr_endpoint=self.settings.get("azureOcrEndpoint") or None,
+                tesseract_lang=self.settings.get("tesseractLang", "deu+eng"),
+                tesseract_cmd=self.settings.get("tesseractCmd") or None,
+            )
             result = self.engine.convert(file_path)
+            if not result or not result.strip():
+                raise RuntimeError("No text extracted. Check the enabled methods and OCR settings.")
             if result.lstrip().startswith("Error:"):
-                self.output_text.setText(result.strip())
+                self.output_text.setPlainText(result.strip())
                 return
-            self.output_text.setText(result)
+            self.output_text.setPlainText(result)
         except Exception as exc:
-            self.output_text.setText(format_conversion_error(file_path, exc))
+            self.output_text.setPlainText(format_conversion_error(file_path, exc))
 
 
 if __name__ == "__main__":
