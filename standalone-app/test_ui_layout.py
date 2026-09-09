@@ -22,6 +22,7 @@ def test_azure_key_is_requested_inside_the_ocr_section() -> None:
 
     assert "self.azure_key_input = QLineEdit" in ocr_source
     assert 'ocr_form.addRow("Azure Computer Vision key:", self.azure_key_input)' in ocr_source
+    assert 'ocr_form.addRow("Azure Computer Vision endpoint:", self.azure_endpoint_input)' in ocr_source
     assert "self.azure_di_key_input = QLineEdit" in ocr_source
 
 

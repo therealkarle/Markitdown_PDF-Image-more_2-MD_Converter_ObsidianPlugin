@@ -256,7 +256,7 @@ class MarkItDownApp(QMainWindow):
         ocr_form.addRow("Tesseract language:", self.tess_lang_input)
         self.azure_endpoint_input = QLineEdit(self.settings.get("azureOcrEndpoint", ""))
         self.azure_endpoint_input.setPlaceholderText("https://<resource>.cognitiveservices.azure.com")
-        ocr_form.addRow("Azure endpoint:", self.azure_endpoint_input)
+        ocr_form.addRow("Azure Computer Vision endpoint:", self.azure_endpoint_input)
 
         self.azure_key_input = QLineEdit(self.settings.get("azureOcrKey", ""))
         self.azure_key_input.setEchoMode(QLineEdit.EchoMode.Password)
