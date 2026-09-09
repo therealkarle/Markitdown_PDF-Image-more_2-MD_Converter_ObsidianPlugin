@@ -1,5 +1,5 @@
 markitdown
-google-generativeai
+google-genai
 python-dotenv
 # OCR dependencies
 pytesseract

@@ -22,7 +22,7 @@ Generator IDs
 "tesseract"   — Tesseract OCR  (requires pytesseract + system binary)
 "azure_ocr"   — Azure Computer Vision  (requires azure-ai-vision-imageanalysis + key/endpoint)
 "win_ocr"     — Windows.Media.Ocr  (Windows 10 1803+, requires winrt package)
-"gemini"      — Google Gemini  (requires google-generativeai + API key)
+"gemini"      — Google Gemini  (requires google-genai + API key)
 """
 
 import os
@@ -35,7 +35,8 @@ from dotenv import load_dotenv
 # ── Optional dependency guards ────────────────────────────────────────────────
 
 try:
-    import google.generativeai as genai
+    from google import genai
+    from google.genai import types as genai_types
     GENAI_AVAILABLE = True
 except ImportError:
     GENAI_AVAILABLE = False
@@ -71,6 +72,20 @@ try:
     PDF2IMAGE_AVAILABLE = True
 except ImportError:
     PDF2IMAGE_AVAILABLE = False
+
+
+class _GeminiModelAdapter:
+    """Expose the legacy ``generate_content`` shape used by MarkItDown."""
+
+    def __init__(self, engine, system_instruction=None):
+        self.engine = engine
+        self.system_instruction = system_instruction
+
+    def generate_content(self, contents):
+        return self.engine._generate_gemini_content(
+            contents,
+            system_instruction=self.system_instruction,
+        )
 
 # ── Image helpers ─────────────────────────────────────────────────────────────
 
@@ -231,15 +246,33 @@ class ConversionEngine:
 
         return _asyncio.run(_async_ocr(file_path))
 
-    def _run_gemini_direct(self, file_path: str) -> str:
-        """Run Gemini directly on the file (used as a generator in the chain)."""
+    def _generate_gemini_content(self, contents, system_instruction=None):
+        """Generate content through the current Google Gen AI client API."""
         if not self.api_key:
             raise RuntimeError("No Gemini API key configured.")
         if not GENAI_AVAILABLE:
-            raise RuntimeError("google-generativeai is not installed.")
-        genai.configure(api_key=self.api_key)
-        model = genai.GenerativeModel(
-            self.model_name,
+            raise RuntimeError("google-genai is not installed.")
+
+        client = genai.Client(api_key=self.api_key)
+        try:
+            kwargs = {
+                "model": self.model_name,
+                "contents": contents,
+            }
+            if system_instruction:
+                kwargs["config"] = genai_types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                )
+            return client.models.generate_content(**kwargs)
+        finally:
+            close = getattr(client, "close", None)
+            if close:
+                close()
+
+    def _run_gemini_direct(self, file_path: str) -> str:
+        """Run Gemini directly on the file (used as a generator in the chain)."""
+        model = _GeminiModelAdapter(
+            self,
             system_instruction=self.prompt_override or None,
         )
         md = MarkItDown(llm_client=model, llm_model=self.model_name)
@@ -250,7 +283,7 @@ class ConversionEngine:
         if not self.api_key:
             raise RuntimeError("No Gemini API key configured for AI improve.")
         if not GENAI_AVAILABLE:
-            raise RuntimeError("google-generativeai is not installed.")
+            raise RuntimeError("google-genai is not installed.")
         system = (
             self.prompt_override
             or (
@@ -260,9 +293,10 @@ class ConversionEngine:
                 "Return only the improved Markdown, no commentary."
             )
         )
-        genai.configure(api_key=self.api_key)
-        model = genai.GenerativeModel(self.model_name, system_instruction=system)
-        response = model.generate_content(text)
+        response = self._generate_gemini_content(
+            text,
+            system_instruction=system,
+        )
         return response.text
 
     def _run_gemini_auto_detect(self, file_path: str) -> str:
@@ -274,7 +308,7 @@ class ConversionEngine:
         if not self.api_key:
             raise RuntimeError("No Gemini API key configured for AI auto-detect.")
         if not GENAI_AVAILABLE:
-            raise RuntimeError("google-generativeai is not installed.")
+            raise RuntimeError("google-genai is not installed.")
         valid = {"markitdown", "tesseract", "azure_ocr", "win_ocr", "gemini"}
         prompt = (
             "Look at the attached file. "
@@ -283,15 +317,13 @@ class ConversionEngine:
             "Respond with only the method name, nothing else."
         )
         try:
-            genai.configure(api_key=self.api_key)
-            model = genai.GenerativeModel(self.model_name)
             # Upload / inline the file for inspection
             with open(file_path, "rb") as f:
                 file_bytes = f.read()
             import mimetypes
             mime, _ = mimetypes.guess_type(file_path)
             mime = mime or "application/octet-stream"
-            response = model.generate_content([
+            response = self._generate_gemini_content([
                 {"mime_type": mime, "data": file_bytes},
                 prompt,
             ])
