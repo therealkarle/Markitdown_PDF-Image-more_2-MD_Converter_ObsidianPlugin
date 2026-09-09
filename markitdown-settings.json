@@ -1,0 +1,21 @@
+{
+  "useMarkitdown": true,
+  "useOcr": true,
+  "useAi": true,
+  "blockPriority": [
+    "markitdown",
+    "ocr",
+    "ai"
+  ],
+  "ocrPriority": [
+    "tesseract",
+    "azure_ocr"
+  ],
+  "aiAutoDetect": false,
+  "aiImprove": false,
+  "azureOcrEndpoint": "",
+  "tesseractLang": "deu+eng",
+  "modelName": "gemini-2.0-flash-lite-preview-02-05",
+  "promptOverride": "",
+  "footerTemplate": "\n\n---\nConverted on {{date}} using {{model}}"
+}

@@ -231,6 +231,15 @@ class MarkItDownApp(QMainWindow):
         self.azure_endpoint_input = QLineEdit(self.settings.get("azureOcrEndpoint", ""))
         self.azure_endpoint_input.setPlaceholderText("https://<resource>.cognitiveservices.azure.com")
         ocr_form.addRow("Azure endpoint:", self.azure_endpoint_input)
+
+        self.azure_key_input = QLineEdit(self.settings.get("azureOcrKey", ""))
+        self.azure_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.azure_key_input.setPlaceholderText("Required for Azure Computer Vision")
+        ocr_form.addRow("Azure OCR key:", self.azure_key_input)
+
+        save_cred_btn = QPushButton("Save API Keys to .env")
+        save_cred_btn.clicked.connect(self._on_save_credentials)
+        ocr_form.addRow(save_cred_btn)
         ocr_lay.addLayout(ocr_form)
         lay.addWidget(self.ocr_group)
 
@@ -274,22 +283,7 @@ class MarkItDownApp(QMainWindow):
         ai_lay.addLayout(ai_form)
         lay.addWidget(self.ai_group)
 
-        # ── 4. Credentials ────────────────────────────────────────────────────
-        cred_group = QGroupBox("Credentials  (stored in .env)")
-        cred_form  = QFormLayout(cred_group)
-
-        # Gemini key is already in AI group; Azure key here since it's also used without AI
-        self.azure_key_input = QLineEdit(self.settings.get("azureOcrKey", ""))
-        self.azure_key_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.azure_key_input.setPlaceholderText("Required for Azure Computer Vision")
-        cred_form.addRow("Azure OCR Key:", self.azure_key_input)
-
-        save_cred_btn = QPushButton("Save API Keys to .env")
-        save_cred_btn.clicked.connect(self._on_save_credentials)
-        cred_form.addRow(save_cred_btn)
-        lay.addWidget(cred_group)
-
-        # ── 5. Sync ───────────────────────────────────────────────────────────
+        # ── 4. Sync ───────────────────────────────────────────────────────────
         sync_group = QGroupBox("Settings Sync")
         sync_form  = QFormLayout(sync_group)
         self.separate_cb = QCheckBox("Use separate settings file for standalone app")
@@ -302,7 +296,7 @@ class MarkItDownApp(QMainWindow):
         sync_form.addRow(self.sync_label)
         lay.addWidget(sync_group)
 
-        # ── 6. Save ───────────────────────────────────────────────────────────
+        # ── 5. Save ───────────────────────────────────────────────────────────
         save_btn = QPushButton("Save settings")
         save_btn.clicked.connect(self._on_save_settings)
         lay.addWidget(save_btn)
