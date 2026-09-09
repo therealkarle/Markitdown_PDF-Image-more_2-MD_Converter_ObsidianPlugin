@@ -47,22 +47,23 @@ except ImportError:
 
 try:
     from azure.ai.vision.imageanalysis import ImageAnalysisClient
+    from azure.ai.vision.imageanalysis.models import VisualFeatures
     from azure.core.credentials import AzureKeyCredential
     AZURE_OCR_AVAILABLE = True
 except ImportError:
     AZURE_OCR_AVAILABLE = False
 
 WIN_OCR_AVAILABLE = False
+WIN_OCR_IMPORT_ERROR: Exception | None = None
 if platform.system() == "Windows":
     try:
         import winrt.windows.media.ocr as _win_ocr_mod
-        import winrt.windows.globalization as _win_glob
         import winrt.windows.graphics.imaging as _win_img
         import winrt.windows.storage.streams as _win_streams
         import asyncio as _asyncio
         WIN_OCR_AVAILABLE = True
-    except ImportError:
-        pass
+    except ImportError as error:
+        WIN_OCR_IMPORT_ERROR = error
 
 try:
     import pdf2image as _pdf2image
@@ -266,10 +267,21 @@ class ConversionEngine:
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
         self.model_name = model_name
         self.prompt_override = prompt_override
-        self.azure_ocr_key = azure_ocr_key or os.getenv("AZURE_OCR_KEY")
-        self.azure_ocr_endpoint = azure_ocr_endpoint or os.getenv("AZURE_OCR_ENDPOINT")
+        self.azure_ocr_key = self._clean_azure_value(
+            azure_ocr_key or os.getenv("AZURE_OCR_KEY")
+        )
+        self.azure_ocr_endpoint = self._clean_azure_value(
+            azure_ocr_endpoint or os.getenv("AZURE_OCR_ENDPOINT")
+        ).rstrip("/")
         self.tesseract_lang = tesseract_lang
         self.tesseract_cmd = tesseract_cmd
+
+    @staticmethod
+    def _clean_azure_value(value: str | None) -> str:
+        """Normalize values pasted into the standalone GUI or a .env file."""
+        if not value:
+            return ""
+        return value.strip().strip('"').strip("'").strip()
 
     # ── Individual generators ─────────────────────────────────────────────────
 
@@ -352,6 +364,23 @@ class ConversionEngine:
             endpoint=self.azure_ocr_endpoint,
             credential=AzureKeyCredential(self.azure_ocr_key),
         )
+
+        def analyze(image_data: bytes):
+            try:
+                return client.analyze(
+                    image_data=image_data,
+                    visual_features=[VisualFeatures.READ],
+                )
+            except Exception as error:
+                if getattr(error, "status_code", None) == 401:
+                    raise RuntimeError(
+                        "Azure OCR returned 401 for "
+                        f"{self.azure_ocr_endpoint}. The key may be valid but must "
+                        "belong to this exact Vision resource, and key-based "
+                        "(local) authentication must be enabled."
+                    ) from error
+                raise
+
         suffix = Path(file_path).suffix.lower()
         if suffix == ".pdf":
             results = []
@@ -359,10 +388,7 @@ class ConversionEngine:
                 import io
                 buf = io.BytesIO()
                 img.save(buf, format="PNG")
-                result = client.analyze(
-                    image_data=buf.getvalue(),
-                    visual_features=["READ"],
-                )
+                result = analyze(buf.getvalue())
                 if result.read:
                     results.append(
                         "\n".join(
@@ -374,7 +400,7 @@ class ConversionEngine:
             return "\n\n---\n\n".join(results)
         with open(file_path, "rb") as f:
             data = f.read()
-        result = client.analyze(image_data=data, visual_features=["READ"])
+        result = analyze(data)
         if result.read:
             return "\n".join(
                 line.text
@@ -385,8 +411,17 @@ class ConversionEngine:
 
     def _run_win_ocr(self, file_path: str) -> str:
         if not WIN_OCR_AVAILABLE:
+            detail = ""
+            if WIN_OCR_IMPORT_ERROR is not None:
+                detail = f" Import failed: {WIN_OCR_IMPORT_ERROR}"
             raise RuntimeError(
-                "Windows OCR unavailable. Requires Windows 10 1803+ and the winrt package."
+                "Windows OCR unavailable. Requires Windows 10 1803+ and the "
+                "PyWinRT packages. Install them with: "
+                "python -m pip install winrt-Windows.Media.Ocr "
+                "winrt-Windows.Foundation "
+                "winrt-Windows.Graphics.Imaging "
+                "winrt-Windows.Storage.Streams."
+                + detail
             )
 
         async def _async_ocr(path: str) -> str:
@@ -402,7 +437,7 @@ class ConversionEngine:
                 buf.seek(0)
                 iras = _win_streams.InMemoryRandomAccessStream()
                 writer = _win_streams.DataWriter(iras)
-                writer.write_bytes(list(buf.getvalue()))
+                writer.write_bytes(buf.getvalue())
                 await writer.store_async()
                 iras.seek(0)
                 decoder = await _win_img.BitmapDecoder.create_async(iras)

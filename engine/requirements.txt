@@ -7,4 +7,7 @@ Pillow
 # Azure OCR (optional, install for azure_ocr mode)
 azure-ai-vision-imageanalysis
 # Windows OCR (optional, Windows-only, install for win_ocr mode)
-# winrt-Windows.Media.Ocr
+winrt-Windows.Media.Ocr; sys_platform == "win32"
+winrt-Windows.Foundation; sys_platform == "win32"
+winrt-Windows.Graphics.Imaging; sys_platform == "win32"
+winrt-Windows.Storage.Streams; sys_platform == "win32"
