@@ -44,6 +44,7 @@ export default class MarkItDownPlugin extends Plugin {
             const content = [
                 `GEMINI_API_KEY=${this.settings.geminiApiKey}`,
                 `AZURE_OCR_KEY=${this.settings.azureOcrKey}`,
+                `AZURE_OCR_ENDPOINT=${this.settings.azureOcrEndpoint}`,
             ].join('\n') + '\n';
             fs.mkdirSync(pluginDir, { recursive: true });
             fs.writeFileSync(envPath, content, 'utf8');

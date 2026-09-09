@@ -1,3 +1,11 @@
 markitdown
 google-generativeai
 python-dotenv
+# OCR dependencies
+pytesseract
+pdf2image
+Pillow
+# Azure OCR (optional, install for azure_ocr mode)
+azure-ai-vision-imageanalysis
+# Windows OCR (optional, Windows-only, install for win_ocr mode)
+# winrt-Windows.Media.Ocr
