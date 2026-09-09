@@ -39,4 +39,4 @@ venv/
 *.obsidian
 standalone-app/settings-mode.json
 settings-mode.json
-#markitdown-settings.json
+markitdown-settings.json
