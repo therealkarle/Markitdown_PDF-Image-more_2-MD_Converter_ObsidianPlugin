@@ -23,8 +23,16 @@ export class ChildProcessBridge {
                 'python',
                 [scriptPath, filePath, JSON.stringify(options)],
                 (error, stdout, stderr) => {
-                    if (error) { reject(`Error: ${error.message}`); return; }
+                    if (error) {
+                        const details = stderr.trim() || stdout.trim() || error.message;
+                        reject(new Error(details));
+                        return;
+                    }
                     if (stderr) console.warn(`Stderr: ${stderr}`);
+                    if (stdout.trimStart().startsWith('Error:')) {
+                        reject(new Error(stdout.trim()));
+                        return;
+                    }
                     resolve(stdout);
                 },
             );

@@ -21,6 +21,27 @@ def _build_enabled_generators(s: dict) -> list[str]:
     return result or ["markitdown"]
 
 
+def convert_file(file_path: str, s: dict) -> str:
+    """Convert a file or raise when the engine reports a failed conversion."""
+
+    use_ai = s.get("useAi", False)
+    engine = ConversionEngine(
+        enabled_generators=_build_enabled_generators(s),
+        ai_improve=use_ai and s.get("aiImprove", False),
+        ai_auto_detect=use_ai and s.get("aiAutoDetect", False),
+        api_key=s.get("geminiApiKey") or None,
+        model_name=s.get("modelName", "gemini-2.0-flash-lite-preview-02-05"),
+        prompt_override=s.get("promptOverride", ""),
+        azure_ocr_key=s.get("azureOcrKey") or None,
+        azure_ocr_endpoint=s.get("azureOcrEndpoint") or None,
+        tesseract_lang=s.get("tesseractLang", "deu+eng"),
+    )
+    result = engine.convert(file_path)
+    if result.lstrip().startswith("Error:"):
+        raise RuntimeError(result.strip())
+    return result
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: python convert.py <file_path> [settings_json]")
@@ -33,17 +54,8 @@ if __name__ == "__main__":
         print(f"Error: Invalid settings JSON: {e}")
         sys.exit(1)
 
-    use_ai = s.get("useAi", False)
-
-    engine = ConversionEngine(
-        enabled_generators=_build_enabled_generators(s),
-        ai_improve=use_ai and s.get("aiImprove", False),
-        ai_auto_detect=use_ai and s.get("aiAutoDetect", False),
-        api_key=s.get("geminiApiKey") or None,
-        model_name=s.get("modelName", "gemini-2.0-flash-lite-preview-02-05"),
-        prompt_override=s.get("promptOverride", ""),
-        azure_ocr_key=s.get("azureOcrKey") or None,
-        azure_ocr_endpoint=s.get("azureOcrEndpoint") or None,
-        tesseract_lang=s.get("tesseractLang", "deu+eng"),
-    )
-    print(engine.convert(file_path))
+    try:
+        print(convert_file(file_path, s))
+    except Exception as error:
+        print(f"Error: {error}", file=sys.stderr)
+        sys.exit(1)

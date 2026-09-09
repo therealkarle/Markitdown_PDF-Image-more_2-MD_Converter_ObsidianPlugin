@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QTextEdit, QVBoxLayout, QWidget, QTabWidget,
 )
 from engine.conversionEngine import ConversionEngine
+from session_state import SessionFileState, format_conversion_error
 
 # ─── OCR sub-engine options ───────────────────────────────────────────────────
 
@@ -95,6 +96,7 @@ class MarkItDownApp(QMainWindow):
         self.use_separate: bool = self._load_separate_flag()
         self.settings: dict     = self._load_settings()
         self.engine: ConversionEngine | None = None
+        self.session_file = SessionFileState()
 
         self._build_ui()
 
@@ -157,6 +159,9 @@ class MarkItDownApp(QMainWindow):
         self.drop_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.drop_label.setStyleSheet("border: 2px dashed #aaa; padding: 30px; border-radius: 4px;")
         lay.addWidget(self.drop_label)
+        self.last_file_label = QLabel("No file selected in this session.")
+        self.last_file_label.setWordWrap(True)
+        lay.addWidget(self.last_file_label)
         btn = QPushButton("Select file")
         btn.clicked.connect(self._on_select_file)
         lay.addWidget(btn)
@@ -500,6 +505,8 @@ class MarkItDownApp(QMainWindow):
     def _on_select_file(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(self, "Select file to convert")
         if file_path:
+            self.session_file.remember(file_path)
+            self.last_file_label.setText(f"Last selected file: {self.session_file.last_file_path}")
             self._convert(file_path)
 
     def _convert(self, file_path: str) -> None:
@@ -520,9 +527,16 @@ class MarkItDownApp(QMainWindow):
             tesseract_lang=self.settings.get("tesseractLang", "deu+eng"),
         )
 
-        self.output_text.setText(f"Converting {Path(file_path).name}…")
-        QApplication.processEvents()
-        self.output_text.setText(self.engine.convert(file_path))
+        try:
+            self.output_text.setText(f"Converting {Path(file_path).name}…")
+            QApplication.processEvents()
+            result = self.engine.convert(file_path)
+            if result.lstrip().startswith("Error:"):
+                self.output_text.setText(result.strip())
+                return
+            self.output_text.setText(result)
+        except Exception as exc:
+            self.output_text.setText(format_conversion_error(file_path, exc))
 
 
 if __name__ == "__main__":

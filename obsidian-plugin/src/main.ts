@@ -87,7 +87,8 @@ export default class MarkItDownPlugin extends Plugin {
             new Notice('Conversion complete: ' + outputPath);
         } catch (error) {
             console.error('Conversion error:', error);
-            new Notice('Conversion failed. Check console for details.');
+            const message = error instanceof Error ? error.message : String(error);
+            new Notice(`Conversion failed: ${message}`);
         }
     }
 }
