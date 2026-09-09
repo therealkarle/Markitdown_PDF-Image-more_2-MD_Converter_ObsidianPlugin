@@ -1,7 +1,10 @@
 import json
+import html
 import os
 import platform
+import re
 import sys
+from urllib.parse import unquote
 from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -107,18 +110,47 @@ class _MarkdownPreviewDocument(QTextDocument):
         else:
             self.setBaseUrl(QUrl())
 
+    def set_markdown(self, markdown: str) -> None:
+        """Normalize image links for Qt's Markdown renderer."""
+        # Qt's Markdown parser drops an image when it is nested inside a
+        # Markdown link: [![alt](image.png)](https://...).  Keep the original
+        # Markdown untouched, but unwrap this construct for the visual preview
+        # so the image is still rendered.
+        preview_markdown = re.sub(
+            r"\[(!\[[^\]]*\]\([^)]+\))\]\([^)]+\)",
+            r"\1",
+            markdown,
+        )
+        # Qt's Markdown image object has no intrinsic size until a resource
+        # request happens during layout. Native HTML images do, so use a small
+        # HTML image element for the preview while leaving the saved Markdown
+        # unchanged.
+        preview_markdown = re.sub(
+            r"!\[([^\]]*)\]\((?:<([^>]+)>|([^\s)]+))\)",
+            lambda match: (
+                f'<img src="{html.escape(match.group(2) or match.group(3), quote=True)}" '
+                f'alt="{html.escape(match.group(1), quote=True)}" />'
+            ),
+            preview_markdown,
+        )
+        self.setMarkdown(preview_markdown)
+
     def loadResource(self, resource_type: int, name: QUrl):
         if resource_type == QTextDocument.ResourceType.ImageResource:
             raw_name = name.toString()
             local_name = name.toLocalFile()
-            if not local_name and len(raw_name) >= 3 and raw_name[1] == ":":
-                local_name = raw_name
+            if not local_name:
+                decoded_name = unquote(raw_name.split("#", 1)[0])
+                if decoded_name.startswith("file:"):
+                    local_name = QUrl(decoded_name).toLocalFile()
+                elif len(decoded_name) >= 3 and decoded_name[1] == ":":
+                    local_name = decoded_name
 
             image_path: Path | None = None
             if local_name:
                 image_path = Path(local_name)
             elif self.base_dir is not None and raw_name:
-                image_path = self.base_dir / raw_name
+                image_path = self.base_dir / unquote(raw_name.split("#", 1)[0])
 
             if image_path is not None:
                 image_path = image_path.expanduser()
@@ -582,7 +614,7 @@ class MarkItDownApp(QMainWindow):
         mode = self.settings.get("outputViewMode", "raw")
         if mode == "rendered":
             self.output_document.set_base_dir(getattr(self, "_output_base_dir", None))
-            self.output_document.setMarkdown(content)
+            self.output_document.set_markdown(content)
             return
 
         self.output_text.setPlainText(content)
