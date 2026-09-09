@@ -28,3 +28,11 @@ def test_standalone_settings_has_no_separate_azure_credentials_section() -> None
     settings_ui = _settings_ui_source()
 
     assert "cred_group = QGroupBox" not in settings_ui
+
+
+def test_standalone_settings_use_scrollable_content() -> None:
+    settings_ui = _settings_ui_source()
+
+    assert "settings_scroll = QScrollArea()" in settings_ui
+    assert "settings_scroll.setWidgetResizable(True)" in settings_ui
+    assert "settings_scroll.setWidget(settings_content)" in settings_ui

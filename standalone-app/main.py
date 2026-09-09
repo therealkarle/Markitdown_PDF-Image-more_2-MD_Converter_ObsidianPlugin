@@ -10,9 +10,9 @@ from dotenv import load_dotenv, set_key
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QFileDialog,
-    QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
-    QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QTextEdit,
-    QVBoxLayout, QWidget, QTabWidget,
+    QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+    QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QScrollArea,
+    QTextEdit, QVBoxLayout, QWidget, QTabWidget,
 )
 from engine.conversionEngine import ConversionEngine
 
@@ -168,7 +168,13 @@ class MarkItDownApp(QMainWindow):
 
     def _build_settings_tab(self) -> QWidget:
         w = QWidget()
-        lay = QVBoxLayout(w)
+        outer_lay = QVBoxLayout(w)
+        settings_scroll = QScrollArea()
+        settings_scroll.setWidgetResizable(True)
+        settings_scroll.setFrameShape(QFrame.Shape.NoFrame)
+
+        settings_content = QWidget()
+        lay = QVBoxLayout(settings_content)
 
         # ── 1. Enable / priority ──────────────────────────────────────────────
         top_group = QGroupBox("Methods — enable and set priority")
@@ -304,6 +310,9 @@ class MarkItDownApp(QMainWindow):
 
         # Apply initial sub-section visibility
         self._update_subgroup_visibility()
+
+        settings_scroll.setWidget(settings_content)
+        outer_lay.addWidget(settings_scroll)
         return w
 
     # ── block list helpers ────────────────────────────────────────────────────

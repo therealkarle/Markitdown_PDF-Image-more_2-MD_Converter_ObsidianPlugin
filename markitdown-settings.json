@@ -9,7 +9,8 @@
   ],
   "ocrPriority": [
     "tesseract",
-    "azure_ocr"
+    "azure_ocr",
+    "win_ocr"
   ],
   "aiAutoDetect": false,
   "aiImprove": false,
