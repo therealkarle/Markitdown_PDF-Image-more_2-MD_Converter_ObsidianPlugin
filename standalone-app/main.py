@@ -166,6 +166,10 @@ class MarkItDownApp(QMainWindow):
         btn = QPushButton("Select file")
         btn.clicked.connect(self._on_select_file)
         lay.addWidget(btn)
+        self.start_conversion_btn = QPushButton("Start conversion")
+        self.start_conversion_btn.setEnabled(False)
+        self.start_conversion_btn.clicked.connect(self._on_start_conversion)
+        lay.addWidget(self.start_conversion_btn)
         self.output_text = QTextEdit()
         self.output_text.setReadOnly(True)
         self.output_text.setPlaceholderText("Conversion output will appear here…")
@@ -508,7 +512,15 @@ class MarkItDownApp(QMainWindow):
         if file_path:
             self.session_file.remember(file_path)
             self.last_file_label.setText(f"Last selected file: {self.session_file.last_file_path}")
-            self._convert(file_path)
+            self.start_conversion_btn.setEnabled(True)
+            self.output_text.clear()
+
+    def _on_start_conversion(self) -> None:
+        file_path = self.session_file.last_file_path
+        if not file_path:
+            self.output_text.setPlainText("Select a file before starting the conversion.")
+            return
+        self._convert(file_path)
 
     def _convert(self, file_path: str) -> None:
         try:

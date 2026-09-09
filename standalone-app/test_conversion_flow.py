@@ -31,14 +31,28 @@ class ConversionFlowTests(unittest.TestCase):
         self.window.deleteLater()
         self.app.processEvents()
 
-    def test_selecting_image_displays_real_ocr_after_empty_markitdown(self):
+    def test_start_button_converts_selected_image_after_empty_markitdown(self):
         file_path = str(Path(__file__).parents[1] / "Testfiles" / "firefox_rSX6oGI9gX.png")
         with patch.object(self.main.QFileDialog, "getOpenFileName", return_value=(file_path, "")):
             self.window._on_select_file()
+        self.assertTrue(self.window.start_conversion_btn.isEnabled())
+        self.window._on_start_conversion()
         output = self.window.output_text.toPlainText()
         self.assertIn("Beschreibung", output)
         self.assertNotIn("Error:", output)
         self.assertEqual(self.window.session_file.last_file_path, file_path)
+
+    def test_selecting_file_does_not_start_conversion_automatically(self):
+        file_path = str(Path(__file__).parents[1] / "Testfiles" / "firefox_rSX6oGI9gX.png")
+        with patch.object(self.main.QFileDialog, "getOpenFileName", return_value=(file_path, "")), \
+             patch.object(self.main.ConversionEngine, "convert") as convert:
+            self.window._on_select_file()
+        convert.assert_not_called()
+        self.assertEqual(self.window.output_text.toPlainText(), "")
+
+    def test_start_without_file_shows_actionable_message(self):
+        self.window._on_start_conversion()
+        self.assertIn("Select a file", self.window.output_text.toPlainText())
 
     def test_empty_results_show_an_error_instead_of_the_placeholder(self):
         with patch.object(self.main.ConversionEngine, "convert", return_value=" \n\t"):
