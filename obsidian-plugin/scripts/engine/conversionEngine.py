@@ -539,17 +539,67 @@ class ConversionEngine:
         try:
             kwargs = {
                 "model": model or self.model_name,
-                "contents": contents,
             }
             if system_instruction:
                 kwargs["config"] = genai_types.GenerateContentConfig(
                     system_instruction=system_instruction,
                 )
-            return client.models.generate_content(**kwargs)
+            # Use the chat API for requests that may use automatic function
+            # calling. The Gen AI SDK recommends Chat.send_message for AFC
+            # instead of calling Models.generate_content directly.
+            chat = client.chats.create(**kwargs)
+            return chat.send_message(self._normalize_chat_message(contents))
         finally:
             close = getattr(client, "close", None)
             if close:
                 close()
+
+    @staticmethod
+    def _normalize_chat_message(contents):
+        """Convert legacy ContentDict/blob input to SDK Part objects."""
+        if not isinstance(contents, list):
+            return contents
+
+        parts = []
+        for item in contents:
+            if isinstance(item, dict) and "parts" in item:
+                parts.extend(item["parts"])
+            elif isinstance(item, dict) and {"mime_type", "data"}.issubset(item):
+                parts.append({
+                    "inline_data": {
+                        "mime_type": item["mime_type"],
+                        "data": item["data"],
+                    }
+                })
+            elif isinstance(item, str):
+                parts.append({"text": item})
+            else:
+                parts.append(item)
+
+        normalized = []
+        for part in parts:
+            if not isinstance(part, dict):
+                normalized.append(part)
+                continue
+            if "text" in part:
+                normalized.append(genai_types.Part.from_text(text=part["text"]))
+                continue
+            inline_data = part.get("inline_data")
+            if inline_data:
+                normalized.append(genai_types.Part.from_bytes(
+                    data=inline_data["data"],
+                    mime_type=inline_data["mime_type"],
+                ))
+                continue
+            file_data = part.get("file_data")
+            if file_data:
+                normalized.append(genai_types.Part.from_uri(
+                    file_uri=file_data["file_uri"],
+                    mime_type=file_data.get("mime_type"),
+                ))
+                continue
+            normalized.append(part)
+        return normalized[0] if len(normalized) == 1 else normalized
 
     def _run_gemini_direct(self, file_path: str) -> str:
         """Run Gemini directly on the file (used as a generator in the chain)."""
@@ -569,10 +619,17 @@ class ConversionEngine:
         system = (
             self.prompt_override
             or (
-                "You are a document formatting assistant. "
-                "Clean up and improve the following extracted text into well-structured Markdown. "
-                "Fix OCR errors, restore formatting, keep all content intact. "
-                "Return only the improved Markdown, no commentary."
+                "You are a strict OCR cleanup and Markdown formatting assistant. "
+                "Return only the clean source text from the input as well-structured Markdown. "
+                "Preserve the source language, wording, names, numbers, punctuation, meaning, "
+                "and all clearly supported formatting such as headings, paragraphs, lists, "
+                "tables, links, bold, italics, quotes, code, and captions. "
+                "Correct only obvious OCR errors and restore formatting that is supported by the source. "
+                "The input may contain an AI-generated image description: discard that meta-description, "
+                "summaries, interpretations, and translations. Preserve headings and labels that are visibly "
+                "part of the source itself, including labels such as Beschreibung or Description. "
+                "Do not add explanations, commentary, metadata, or invented content. "
+                "Output only the final Markdown."
             )
         )
         response = self._generate_gemini_content(

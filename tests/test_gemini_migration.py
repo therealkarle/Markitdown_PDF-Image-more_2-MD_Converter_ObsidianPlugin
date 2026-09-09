@@ -30,19 +30,25 @@ class _AdapterEngine:
         return _FakeResponse("image description")
 
 
-class _FakeModels:
+class _FakeChat:
     def __init__(self):
+        self.create_kwargs = None
         self.calls = []
 
-    def generate_content(self, **kwargs):
-        self.calls.append(kwargs)
+    def send_message(self, contents):
+        self.calls.append(contents)
         return _FakeResponse("improved markdown")
 
 
 class _FakeClient:
     def __init__(self, api_key):
         self.api_key = api_key
-        self.models = _FakeModels()
+        self.chats = self
+        self.chat = _FakeChat()
+
+    def create(self, **kwargs):
+        self.chat.create_kwargs = kwargs
+        return self.chat
 
 
 class _FakeGenai:
@@ -58,6 +64,20 @@ class _FakeGenai:
 class _FakeGenerateContentConfig:
     def __init__(self, system_instruction=None):
         self.system_instruction = system_instruction
+
+
+class _FakePart:
+    @classmethod
+    def from_text(cls, *, text):
+        return {"text": text}
+
+    @classmethod
+    def from_bytes(cls, *, data, mime_type):
+        return {"inline_data": {"mime_type": mime_type, "data": data}}
+
+    @classmethod
+    def from_uri(cls, *, file_uri, mime_type=None):
+        return {"file_data": {"file_uri": file_uri, "mime_type": mime_type}}
 
 
 class GeminiMigrationTests(unittest.TestCase):
@@ -81,7 +101,8 @@ class GeminiMigrationTests(unittest.TestCase):
     def test_improve_uses_new_google_genai_client_api(self):
         fake_genai = _FakeGenai()
         fake_types = types.SimpleNamespace(
-            GenerateContentConfig=_FakeGenerateContentConfig
+            GenerateContentConfig=_FakeGenerateContentConfig,
+            Part=_FakePart,
         )
         with patch.object(self.module, "genai", fake_genai, create=True), patch.object(
             self.module, "genai_types", fake_types, create=True
@@ -98,14 +119,35 @@ class GeminiMigrationTests(unittest.TestCase):
         self.assertEqual(len(fake_genai.clients), 1)
         client = fake_genai.clients[0]
         self.assertEqual(client.api_key, "test-key")
-        self.assertEqual(len(client.models.calls), 1)
-        call = client.models.calls[0]
+        self.assertEqual(len(client.chat.calls), 1)
+        call = client.chat.create_kwargs
         self.assertEqual(call["model"], "test-model")
-        self.assertEqual(call["contents"], "raw text")
         self.assertEqual(
             call["config"].system_instruction,
             "Keep the content intact.",
         )
+        self.assertEqual(client.chat.calls[0], "raw text")
+
+    def test_default_improve_prompt_returns_only_source_markdown(self):
+        fake_genai = _FakeGenai()
+        fake_types = types.SimpleNamespace(
+            GenerateContentConfig=_FakeGenerateContentConfig,
+            Part=_FakePart,
+        )
+        with patch.object(self.module, "genai", fake_genai, create=True), patch.object(
+            self.module, "genai_types", fake_types, create=True
+        ), patch.object(self.module, "GENAI_AVAILABLE", True):
+            engine = self.module.ConversionEngine(
+                api_key="test-key",
+                model_name="test-model",
+            )
+            engine._run_gemini_improve("AI image description")
+
+        prompt = fake_genai.clients[0].chat.create_kwargs["config"].system_instruction
+        self.assertIn("Return only the clean source text", prompt)
+        self.assertIn("discard that meta-description", prompt)
+        self.assertIn("translations", prompt)
+        self.assertIn("Preserve headings and labels", prompt)
 
     def test_markitdown_chat_completion_adapter_converts_image_messages(self):
         engine = _AdapterEngine()
@@ -140,6 +182,47 @@ class GeminiMigrationTests(unittest.TestCase):
         self.assertEqual(
             call["contents"][0]["parts"][1],
             {"inline_data": {"mime_type": "image/png", "data": b"\x00\x01"}},
+        )
+
+    def test_chat_api_normalizes_content_dicts_to_parts(self):
+        fake_genai = _FakeGenai()
+        fake_types = types.SimpleNamespace(
+            GenerateContentConfig=_FakeGenerateContentConfig,
+            Part=_FakePart,
+        )
+        with patch.object(self.module, "genai", fake_genai, create=True), patch.object(
+            self.module, "genai_types", fake_types, create=True
+        ), patch.object(self.module, "GENAI_AVAILABLE", True):
+            engine = self.module.ConversionEngine(
+                api_key="test-key",
+                model_name="test-model",
+            )
+            engine._generate_gemini_content([
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": "Describe the image."},
+                        {
+                            "inline_data": {
+                                "mime_type": "image/png",
+                                "data": b"\x00\x01",
+                            }
+                        },
+                    ],
+                }
+            ])
+
+        self.assertEqual(
+            fake_genai.clients[0].chat.calls[0],
+            [
+                {"text": "Describe the image."},
+                {
+                    "inline_data": {
+                        "mime_type": "image/png",
+                        "data": b"\x00\x01",
+                    }
+                },
+            ],
         )
 
 
