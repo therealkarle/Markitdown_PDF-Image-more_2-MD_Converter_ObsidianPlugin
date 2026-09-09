@@ -20,9 +20,9 @@ from session_state import SessionFileState, format_conversion_error
 # ─── OCR sub-engine options ───────────────────────────────────────────────────
 
 _OCR_ENGINES: list[tuple[str, str]] = [
+    ("azure_document_intelligence", "Azure Document Intelligence  (cloud)"),
     ("tesseract", "Tesseract  (local)"),
     ("azure_ocr", "Azure Computer Vision  (cloud)"),
-    ("azure_document_intelligence", "Azure Document Intelligence  (cloud)"),
 ]
 if platform.system() == "Windows":
     _OCR_ENGINES.append(("win_ocr", "Windows OCR  (local, Windows only)"))
@@ -45,7 +45,7 @@ DEFAULT_SETTINGS: dict = {
     # priority order of blocks: list of block-ids
     "blockPriority": ["markitdown", "ocr", "ai"],
     # OCR sub-engine priority (subset of OCR_ENGINE_IDS)
-    "ocrPriority":   ["tesseract", "azure_ocr", "azure_document_intelligence"],
+    "ocrPriority":   ["azure_document_intelligence", "tesseract", "azure_ocr", "win_ocr"],
     # AI extras
     "aiAutoDetect":  False,
     "aiImprove":     False,
@@ -74,7 +74,10 @@ def _build_enabled_generators(s: dict) -> list[str]:
         if block == "markitdown" and s.get("useMarkitdown", True):
             result.append("markitdown")
         elif block == "ocr" and s.get("useOcr", False):
-            for eid in s.get("ocrPriority", ["tesseract"]):
+            for eid in s.get(
+                "ocrPriority",
+                ["azure_document_intelligence", "tesseract", "azure_ocr", "win_ocr"],
+            ):
                 result.append(eid)
         elif block == "ai" and s.get("useAi", False):
             # Gemini as a plain fallback generator (ai_improve / ai_auto_detect
@@ -139,6 +142,12 @@ class MarkItDownApp(QMainWindow):
             s.update(data)
         except (OSError, json.JSONDecodeError):
             pass
+        if s.get("ocrPriority") == [
+            "tesseract",
+            "azure_ocr",
+            "azure_document_intelligence",
+        ]:
+            s["ocrPriority"] = list(DEFAULT_SETTINGS["ocrPriority"])
         s["geminiApiKey"] = self._load_env_key("GEMINI_API_KEY")
         s["azureOcrKey"]  = self._load_env_key("AZURE_OCR_KEY")
         s["azureDocumentIntelligenceKey"] = self._load_env_key(

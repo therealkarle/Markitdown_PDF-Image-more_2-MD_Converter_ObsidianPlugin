@@ -29,11 +29,20 @@ export default class MarkItDownPlugin extends Plugin {
     async loadSettings() {
         const data = await this.loadData();
         this.settings = { ...DEFAULT_SETTINGS, ...data };
-        const configuredPriority = Array.isArray(data?.ocrPriority)
-            ? data.ocrPriority
+        const legacyDefaultPriority: OcrEngine[] = [
+            'tesseract',
+            'azure_ocr',
+            'azure_document_intelligence',
+        ];
+        const configuredPriority: OcrEngine[] = Array.isArray(data?.ocrPriority)
+            ? data.ocrPriority as OcrEngine[]
             : DEFAULT_SETTINGS.ocrPriority;
+        const priorityToUse = configuredPriority.length === legacyDefaultPriority.length
+            && configuredPriority.every((engine, index) => engine === legacyDefaultPriority[index])
+            ? DEFAULT_SETTINGS.ocrPriority
+            : configuredPriority;
         this.settings.ocrPriority = Array.from(new Set([
-            ...configuredPriority,
+            ...priorityToUse,
             ...DEFAULT_SETTINGS.ocrPriority,
         ])) as OcrEngine[];
     }
@@ -169,9 +178,9 @@ class MarkItDownSettingTab extends PluginSettingTab {
 
         new Setting(this.ocrSection)
             .setName('OCR sub-engine priority')
-            .setDesc('Comma-separated: tesseract, azure_ocr, azure_document_intelligence, win_ocr')
+            .setDesc('Comma-separated: azure_document_intelligence, tesseract, azure_ocr, win_ocr')
             .addText(t => t
-                .setPlaceholder('tesseract,azure_ocr,azure_document_intelligence')
+                .setPlaceholder('azure_document_intelligence,tesseract,azure_ocr,win_ocr')
                 .setValue(this.plugin.settings.ocrPriority.join(','))
                 .onChange(async v => {
                     this.plugin.settings.ocrPriority = v.split(',').map(s => s.trim()).filter(Boolean) as OcrEngine[];

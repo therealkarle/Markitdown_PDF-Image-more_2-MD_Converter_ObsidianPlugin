@@ -13,7 +13,10 @@ def _build_enabled_generators(s: dict) -> list[str]:
         if block == "markitdown" and s.get("useMarkitdown", True):
             result.append("markitdown")
         elif block == "ocr" and s.get("useOcr", False):
-            for eid in s.get("ocrPriority", ["tesseract"]):
+            for eid in s.get(
+                "ocrPriority",
+                ["azure_document_intelligence", "tesseract", "azure_ocr", "win_ocr"],
+            ):
                 result.append(eid)
         elif block == "ai" and s.get("useAi", False):
             if not s.get("aiImprove", False) and not s.get("aiAutoDetect", False):

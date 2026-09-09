@@ -32,7 +32,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
     useOcr: false,
     useAi: false,
     blockPriority: ['markitdown', 'ocr', 'ai'],
-    ocrPriority: ['tesseract', 'azure_ocr', 'azure_document_intelligence'],
+    ocrPriority: ['azure_document_intelligence', 'tesseract', 'azure_ocr', 'win_ocr'],
     aiAutoDetect: false,
     aiImprove: false,
     geminiApiKey: '',
