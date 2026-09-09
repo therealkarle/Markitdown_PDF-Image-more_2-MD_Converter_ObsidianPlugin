@@ -10,8 +10,8 @@ from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from dotenv import load_dotenv, set_key
-from PySide6.QtCore import QUrl, Qt
-from PySide6.QtGui import QImage, QTextDocument
+from PySide6.QtCore import QUrl, Qt, Signal
+from PySide6.QtGui import QImage, QPainter, QTextDocument
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QFileDialog,
     QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
@@ -162,6 +162,68 @@ class _MarkdownPreviewDocument(QTextDocument):
         return super().loadResource(resource_type, name)
 
 
+class OutputModeSwitch(QWidget):
+    """Two-sided pill switch with the active mode highlighted."""
+
+    toggled = Signal(bool)
+
+    def __init__(self, checked: bool = False, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._checked = checked
+        self.setFixedSize(150, 32)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip("Switch between raw Markdown and rendered preview")
+
+    def isChecked(self) -> bool:
+        return self._checked
+
+    def setChecked(self, checked: bool) -> None:
+        checked = bool(checked)
+        if checked == self._checked:
+            self.update()
+            return
+        self._checked = checked
+        self.update()
+        self.toggled.emit(checked)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.setChecked(not self._checked)
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.setChecked(not self._checked)
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def paintEvent(self, _event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        track = self.rect().adjusted(34, 4, -46, -4)
+        track_color = "#666666"
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(track_color)
+        painter.drawRoundedRect(track, track.height() / 2, track.height() / 2)
+
+        thumb_size = track.height() - 8
+        thumb_x = track.right() - thumb_size - 4 if self._checked else track.left() + 4
+        thumb = track.adjusted(thumb_x - track.left(), 4, thumb_x - track.right() + thumb_size, -4)
+        painter.setBrush("#ffffff")
+        painter.drawRoundedRect(thumb, thumb.height() / 2, thumb.height() / 2)
+
+        font = painter.font()
+        font.setBold(True)
+        font.setPointSize(8)
+        painter.setFont(font)
+        painter.setPen("#ffffff")
+        painter.drawText(0, 0, 30, self.height(), Qt.AlignmentFlag.AlignVCenter, "Raw")
+        painter.drawText(self.width() - 37, 0, 37, self.height(), Qt.AlignmentFlag.AlignVCenter, "Rendered")
+
+
 class MarkItDownApp(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -279,15 +341,12 @@ class MarkItDownApp(QMainWindow):
 
         output_mode_row = QHBoxLayout()
         output_mode_row.addWidget(QLabel("Output view:"))
-        self.output_mode_combo = QComboBox()
-        self.output_mode_combo.addItem("Raw", "raw")
-        self.output_mode_combo.addItem("Rendered", "rendered")
-        mode_index = self.output_mode_combo.findData(self.settings.get("outputViewMode", "raw"))
-        self.output_mode_combo.blockSignals(True)
-        self.output_mode_combo.setCurrentIndex(mode_index if mode_index >= 0 else 0)
-        self.output_mode_combo.blockSignals(False)
-        self.output_mode_combo.currentIndexChanged.connect(self._on_output_mode_changed)
-        output_mode_row.addWidget(self.output_mode_combo)
+        self.output_mode_toggle = OutputModeSwitch(
+            self.settings.get("outputViewMode", "raw") == "rendered",
+            self,
+        )
+        self.output_mode_toggle.toggled.connect(self._on_output_mode_changed)
+        output_mode_row.addWidget(self.output_mode_toggle)
         output_mode_row.addStretch()
         lay.addLayout(output_mode_row)
 
@@ -580,8 +639,8 @@ class MarkItDownApp(QMainWindow):
         self.ocr_group.setVisible(self._block_enabled("ocr"))
         self.ai_group.setVisible(self._block_enabled("ai"))
 
-    def _on_output_mode_changed(self, _index: int) -> None:
-        self.settings["outputViewMode"] = self.output_mode_combo.currentData() or "raw"
+    def _on_output_mode_changed(self, rendered: bool) -> None:
+        self.settings["outputViewMode"] = "rendered" if rendered else "raw"
         self._save_settings()
         self._render_output()
 
@@ -693,10 +752,9 @@ class MarkItDownApp(QMainWindow):
         self.model_input.setCurrentText(self.settings.get("modelName", ""))
         self.prompt_input.setPlainText(self.settings.get("promptOverride", ""))
         output_mode = self.settings.get("outputViewMode", "raw")
-        output_mode_index = self.output_mode_combo.findData(output_mode)
-        self.output_mode_combo.blockSignals(True)
-        self.output_mode_combo.setCurrentIndex(output_mode_index if output_mode_index >= 0 else 0)
-        self.output_mode_combo.blockSignals(False)
+        self.output_mode_toggle.blockSignals(True)
+        self.output_mode_toggle.setChecked(output_mode == "rendered")
+        self.output_mode_toggle.blockSignals(False)
         self.sync_label.setText(self._sync_description())
         self._update_subgroup_visibility()
 

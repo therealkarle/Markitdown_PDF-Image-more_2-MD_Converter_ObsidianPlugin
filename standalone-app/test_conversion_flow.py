@@ -87,17 +87,13 @@ class ConversionFlowTests(unittest.TestCase):
         with patch.object(self.main.ConversionEngine, "convert", return_value=markdown):
             self.window._convert("input.md")
 
-        self.window.output_mode_combo.setCurrentIndex(
-            self.window.output_mode_combo.findData("rendered")
-        )
+        self.window.output_mode_toggle.setChecked(True)
         rendered = self.window.output_text.toHtml()
         self.assertIn("Heading", rendered)
         self.assertIn("font-weight", rendered)
         self.assertNotIn("# Heading", rendered)
 
-        self.window.output_mode_combo.setCurrentIndex(
-            self.window.output_mode_combo.findData("raw")
-        )
+        self.window.output_mode_toggle.setChecked(False)
         self.assertEqual(self.window.output_text.toPlainText(), markdown)
 
     def test_rendered_view_loads_relative_local_images(self):
