@@ -29,15 +29,94 @@ Generator IDs
 """
 
 import base64
+import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import platform
+import zipfile
 from pathlib import Path
 from markitdown import MarkItDown
 from dotenv import load_dotenv
+
+
+_EMBEDDED_IMAGE_RE = re.compile(
+    r"data:image/(?P<mime>[a-zA-Z0-9.+-]+);base64,(?P<data>[A-Za-z0-9+/=\r\n]+)"
+)
+_TRUNCATED_IMAGE_RE = re.compile(
+    r"data:image/(?P<mime>[a-zA-Z0-9.+-]+);base64(?:\.\.\.)?"
+)
+
+
+def materialize_embedded_images(markdown: str, source_path: str | Path) -> str:
+    """Save MarkItDown data-URI images next to the source and link them locally."""
+    source = Path(source_path).expanduser().resolve()
+    media_dir = source.parent / "media"
+    image_number = 0
+    saved_by_digest: dict[str, str] = {}
+
+    def save_image(image_bytes: bytes, extension: str) -> str:
+        nonlocal image_number
+        digest = hashlib.sha256(image_bytes).hexdigest()[:12]
+        relative_name = saved_by_digest.get(digest)
+        if relative_name is not None:
+            return relative_name
+        image_number += 1
+        extension = extension.lower().lstrip(".")
+        if extension == "jpeg":
+            extension = "jpg"
+        if extension not in {"png", "jpg", "gif", "webp", "bmp", "svg", "tiff"}:
+            extension = "bin"
+        filename = f"{source.stem}-image-{image_number:03d}-{digest}.{extension}"
+        media_dir.mkdir(parents=True, exist_ok=True)
+        (media_dir / filename).write_bytes(image_bytes)
+        relative_name = f"media/{filename}"
+        saved_by_digest[digest] = relative_name
+        return relative_name
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal image_number
+        try:
+            image_bytes = base64.b64decode(match.group("data"), validate=False)
+        except (ValueError, base64.binascii.Error):
+            return match.group(0)
+        if not image_bytes:
+            return match.group(0)
+
+        return save_image(image_bytes, match.group("mime").split("+")[0])
+
+    result = _EMBEDDED_IMAGE_RE.sub(replace, markdown)
+
+    # Some MarkItDown versions intentionally shorten image data URIs to
+    # ``data:image/png;base64...``.  For container formats, recover the
+    # original embedded image bytes directly from the source archive.
+    archive_images: list[tuple[str, bytes]] = []
+    if source.suffix.lower() in {".docx", ".pptx", ".xlsx", ".odt"}:
+        try:
+            with zipfile.ZipFile(source) as archive:
+                for info in archive.infolist():
+                    name = info.filename.lower()
+                    if "/media/" in name or "/pictures/" in name:
+                        extension = Path(info.filename).suffix.lstrip(".")
+                        if extension.lower() in {"png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "tiff"}:
+                            archive_images.append((extension, archive.read(info)))
+        except (OSError, zipfile.BadZipFile):
+            archive_images = []
+
+    archive_index = 0
+
+    def replace_truncated(match: re.Match[str]) -> str:
+        nonlocal archive_index
+        if archive_index >= len(archive_images):
+            return match.group(0)
+        extension, image_bytes = archive_images[archive_index]
+        archive_index += 1
+        return save_image(image_bytes, extension)
+
+    return _TRUNCATED_IMAGE_RE.sub(replace_truncated, result)
 
 # ── Optional dependency guards ────────────────────────────────────────────────
 
@@ -808,17 +887,20 @@ class ConversionEngine:
         if base_result is None:
             return "Error: All generators failed. " + " | ".join(errors)
 
+        # Materialize native image data before optional AI cleanup.
+        base_result = materialize_embedded_images(base_result, file_path)
+
         # Step 3 — AI improve (optional post-process)
         if self.ai_improve:
             try:
                 improved_result = self._run_gemini_improve(base_result)
                 if improved_result and improved_result.strip():
-                    return improved_result
+                    return materialize_embedded_images(improved_result, file_path)
             except Exception as e:
                 errors.append(f"ai_improve: {e}")
                 # Return base result if improvement fails
 
-        return base_result
+        return materialize_embedded_images(base_result, file_path)
 
 
 # ── CLI entry point ───────────────────────────────────────────────────────────
