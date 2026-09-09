@@ -42,7 +42,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
     azureDocumentIntelligenceEndpoint: '',
     tesseractLang: 'deu+eng',
     tesseractCmd: '',
-    modelName: 'gemini-2.0-flash-lite-preview-02-05',
+    modelName: 'gemini-3.1-flash-lite',
     promptOverride: '',
     footerTemplate: '\n\n---\nConverted on {{date}} using {{model}}',
     useSeparatePluginSettings: false,

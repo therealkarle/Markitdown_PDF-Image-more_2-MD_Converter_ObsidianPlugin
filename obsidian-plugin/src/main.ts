@@ -29,6 +29,17 @@ export default class MarkItDownPlugin extends Plugin {
     async loadSettings() {
         const data = await this.loadData();
         this.settings = { ...DEFAULT_SETTINGS, ...data };
+        const retiredModels = new Set([
+            'gemini-2.0-flash-lite-preview-02-05',
+            'gemini-2.0-flash-lite',
+            'gemini-2.0-flash',
+            'gemini-1.5-flash',
+            'gemini-1.5-pro',
+        ]);
+        if (retiredModels.has(this.settings.modelName)) {
+            this.settings.modelName = DEFAULT_SETTINGS.modelName;
+            await this.saveData(this.settings);
+        }
         const legacyDefaultPriority: OcrEngine[] = [
             'tesseract',
             'azure_ocr',
@@ -263,9 +274,10 @@ class MarkItDownSettingTab extends PluginSettingTab {
         new Setting(this.aiSection)
             .setName('Gemini Model')
             .addDropdown(d => d
-                .addOption('gemini-2.0-flash-lite-preview-02-05', 'Gemini 2.0 Flash-Lite')
-                .addOption('gemini-1.5-flash', 'Gemini 1.5 Flash')
-                .addOption('gemini-1.5-pro', 'Gemini 1.5 Pro')
+                .addOption('gemini-3.1-flash-lite', 'Gemini 3.1 Flash-Lite (recommended/free high throughput)')
+                .addOption('gemini-3.8-flash', 'Gemini 3.8 Flash (highest quality)')
+                .addOption('gemini-3.7-flash', 'Gemini 3.7 Flash (quality/speed balance)')
+                .addOption('gemini-3.5-flash-lite', 'Gemini 3.5 Flash-Lite (fast fallback)')
                 .setValue(this.plugin.settings.modelName)
                 .onChange(async v => { this.plugin.settings.modelName = v; await this.plugin.saveSettings(); }));
 

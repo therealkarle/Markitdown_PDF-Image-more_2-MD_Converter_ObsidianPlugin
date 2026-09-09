@@ -57,7 +57,7 @@ DEFAULT_SETTINGS: dict = {
     "azureDocumentIntelligenceEndpoint": "",
     "tesseractLang":     "deu+eng",
     "tesseractCmd":      "",
-    "modelName":         "gemini-2.0-flash-lite-preview-02-05",
+    "modelName":         "gemini-3.1-flash-lite",
     "promptOverride":    "",
     # misc
     "footerTemplate": "\n\n---\nConverted on {{date}} using {{model}}",
@@ -142,6 +142,15 @@ class MarkItDownApp(QMainWindow):
             s.update(data)
         except (OSError, json.JSONDecodeError):
             pass
+        retired_models = {
+            "gemini-2.0-flash-lite-preview-02-05",
+            "gemini-2.0-flash-lite",
+            "gemini-2.0-flash",
+            "gemini-1.5-flash",
+            "gemini-1.5-pro",
+        }
+        if s.get("modelName") in retired_models:
+            s["modelName"] = DEFAULT_SETTINGS["modelName"]
         if s.get("ocrPriority") == [
             "tesseract",
             "azure_ocr",
@@ -318,11 +327,12 @@ class MarkItDownApp(QMainWindow):
         self.model_input = QComboBox()
         self.model_input.setEditable(True)
         self.model_input.addItems([
-            "gemini-2.0-flash-lite-preview-02-05",
-            "gemini-1.5-flash",
-            "gemini-1.5-pro",
+            "gemini-3.1-flash-lite",
+            "gemini-3.8-flash",
+            "gemini-3.7-flash",
+            "gemini-3.5-flash-lite",
         ])
-        self.model_input.setCurrentText(self.settings.get("modelName", "gemini-2.0-flash-lite-preview-02-05"))
+        self.model_input.setCurrentText(self.settings.get("modelName", "gemini-3.1-flash-lite"))
         ai_form.addRow("Model:", self.model_input)
 
         self.prompt_input = QTextEdit()
@@ -578,7 +588,7 @@ class MarkItDownApp(QMainWindow):
                 ai_improve=use_ai and self.settings.get("aiImprove", False),
                 ai_auto_detect=use_ai and self.settings.get("aiAutoDetect", False),
                 api_key=self.settings.get("geminiApiKey") or None,
-                model_name=self.settings.get("modelName", "gemini-2.0-flash-lite-preview-02-05"),
+                model_name=self.settings.get("modelName", "gemini-3.1-flash-lite"),
                 prompt_override=self.settings.get("promptOverride", ""),
                 azure_ocr_key=self.settings.get("azureOcrKey") or None,
                 azure_ocr_endpoint=self.settings.get("azureOcrEndpoint") or None,

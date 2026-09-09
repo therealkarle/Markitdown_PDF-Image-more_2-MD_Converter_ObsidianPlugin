@@ -33,7 +33,7 @@ def convert_file(file_path: str, s: dict) -> str:
         ai_improve=use_ai and s.get("aiImprove", False),
         ai_auto_detect=use_ai and s.get("aiAutoDetect", False),
         api_key=s.get("geminiApiKey") or None,
-        model_name=s.get("modelName", "gemini-2.0-flash-lite-preview-02-05"),
+        model_name=s.get("modelName", "gemini-3.1-flash-lite"),
         prompt_override=s.get("promptOverride", ""),
         azure_ocr_key=s.get("azureOcrKey") or None,
         azure_ocr_endpoint=s.get("azureOcrEndpoint") or None,

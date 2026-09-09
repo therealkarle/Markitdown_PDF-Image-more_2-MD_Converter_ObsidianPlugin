@@ -266,7 +266,7 @@ class ConversionEngine:
         ai_improve: bool = False,
         ai_auto_detect: bool = False,
         api_key: str | None = None,
-        model_name: str = "gemini-2.0-flash-lite-preview-02-05",
+        model_name: str = "gemini-3.1-flash-lite",
         prompt_override: str = "",
         azure_ocr_key: str | None = None,
         azure_ocr_endpoint: str | None = None,
