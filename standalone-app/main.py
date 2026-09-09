@@ -7,7 +7,8 @@ from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from dotenv import load_dotenv, set_key
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QUrl, Qt
+from PySide6.QtGui import QImage, QTextDocument
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QFileDialog,
     QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
@@ -59,6 +60,7 @@ DEFAULT_SETTINGS: dict = {
     "tesseractCmd":      "",
     "modelName":         "gemini-3.1-flash-lite",
     "promptOverride":    "",
+    "outputViewMode":    "raw",
     # misc
     "footerTemplate": "\n\n---\nConverted on {{date}} using {{model}}",
 }
@@ -91,6 +93,43 @@ def _build_enabled_generators(s: dict) -> list[str]:
 
 # ─── Main window ──────────────────────────────────────────────────────────────
 
+class _MarkdownPreviewDocument(QTextDocument):
+    """QTextDocument that resolves local Markdown images from the input folder."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.base_dir: Path | None = None
+
+    def set_base_dir(self, base_dir: Path | None) -> None:
+        self.base_dir = base_dir
+        if base_dir is not None:
+            self.setBaseUrl(QUrl.fromLocalFile(str(base_dir) + os.sep))
+        else:
+            self.setBaseUrl(QUrl())
+
+    def loadResource(self, resource_type: int, name: QUrl):
+        if resource_type == QTextDocument.ResourceType.ImageResource:
+            raw_name = name.toString()
+            local_name = name.toLocalFile()
+            if not local_name and len(raw_name) >= 3 and raw_name[1] == ":":
+                local_name = raw_name
+
+            image_path: Path | None = None
+            if local_name:
+                image_path = Path(local_name)
+            elif self.base_dir is not None and raw_name:
+                image_path = self.base_dir / raw_name
+
+            if image_path is not None:
+                image_path = image_path.expanduser()
+                if image_path.exists() and image_path.is_file():
+                    image = QImage(str(image_path))
+                    if not image.isNull():
+                        return image
+
+        return super().loadResource(resource_type, name)
+
+
 class MarkItDownApp(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -106,6 +145,9 @@ class MarkItDownApp(QMainWindow):
         self.settings: dict     = self._load_settings()
         self.engine: ConversionEngine | None = None
         self.session_file = SessionFileState()
+        self._output_content = ""
+        self._output_base_dir: Path | None = None
+        self._output_is_status = False
 
         self._build_ui()
 
@@ -159,6 +201,8 @@ class MarkItDownApp(QMainWindow):
             "azure_document_intelligence",
         ]:
             s["ocrPriority"] = list(DEFAULT_SETTINGS["ocrPriority"])
+        if s.get("outputViewMode") not in {"raw", "rendered"}:
+            s["outputViewMode"] = DEFAULT_SETTINGS["outputViewMode"]
         s["geminiApiKey"] = self._load_env_key("GEMINI_API_KEY")
         s["azureOcrKey"]  = self._load_env_key("AZURE_OCR_KEY")
         s["azureDocumentIntelligenceKey"] = self._load_env_key(
@@ -200,9 +244,26 @@ class MarkItDownApp(QMainWindow):
         self.start_conversion_btn.setEnabled(False)
         self.start_conversion_btn.clicked.connect(self._on_start_conversion)
         lay.addWidget(self.start_conversion_btn)
+
+        output_mode_row = QHBoxLayout()
+        output_mode_row.addWidget(QLabel("Output view:"))
+        self.output_mode_combo = QComboBox()
+        self.output_mode_combo.addItem("Raw", "raw")
+        self.output_mode_combo.addItem("Rendered", "rendered")
+        mode_index = self.output_mode_combo.findData(self.settings.get("outputViewMode", "raw"))
+        self.output_mode_combo.blockSignals(True)
+        self.output_mode_combo.setCurrentIndex(mode_index if mode_index >= 0 else 0)
+        self.output_mode_combo.blockSignals(False)
+        self.output_mode_combo.currentIndexChanged.connect(self._on_output_mode_changed)
+        output_mode_row.addWidget(self.output_mode_combo)
+        output_mode_row.addStretch()
+        lay.addLayout(output_mode_row)
+
         self.output_text = QTextEdit()
         self.output_text.setReadOnly(True)
         self.output_text.setPlaceholderText("Conversion output will appear here…")
+        self.output_document = _MarkdownPreviewDocument()
+        self.output_text.setDocument(self.output_document)
         lay.addWidget(self.output_text)
         return w
 
@@ -406,6 +467,7 @@ class MarkItDownApp(QMainWindow):
             for i in range(self.block_list.count())
         ]
 
+
     def _block_enabled(self, bid: str) -> bool:
         for i in range(self.block_list.count()):
             item = self.block_list.item(i)
@@ -486,6 +548,45 @@ class MarkItDownApp(QMainWindow):
         self.ocr_group.setVisible(self._block_enabled("ocr"))
         self.ai_group.setVisible(self._block_enabled("ai"))
 
+    def _on_output_mode_changed(self, _index: int) -> None:
+        self.settings["outputViewMode"] = self.output_mode_combo.currentData() or "raw"
+        self._save_settings()
+        self._render_output()
+
+    def _set_output_content(
+        self,
+        content: str,
+        source_path: str | None = None,
+        *,
+        status: bool = False,
+    ) -> None:
+        self._output_content = content
+        self._output_is_status = status
+        self._output_base_dir = (
+            Path(source_path).expanduser().resolve().parent
+            if source_path
+            else None
+        )
+        self._render_output()
+
+    def _render_output(self) -> None:
+        content = getattr(self, "_output_content", "")
+        if not content:
+            self.output_text.clear()
+            return
+
+        if getattr(self, "_output_is_status", False):
+            self.output_text.setPlainText(content)
+            return
+
+        mode = self.settings.get("outputViewMode", "raw")
+        if mode == "rendered":
+            self.output_document.set_base_dir(getattr(self, "_output_base_dir", None))
+            self.output_document.setMarkdown(content)
+            return
+
+        self.output_text.setPlainText(content)
+
     # ── helpers ───────────────────────────────────────────────────────────────
 
     def _sync_description(self) -> str:
@@ -528,13 +629,13 @@ class MarkItDownApp(QMainWindow):
         self.settings["azureOcrKey"]  = azure
         self.settings["azureDocumentIntelligenceKey"] = azure_di
         self.engine = None
-        self.output_text.setText("API keys saved to .env.")
+        self._set_output_content("API keys saved to .env.", status=True)
 
     def _on_save_settings(self) -> None:
         self._collect_from_ui()
         self._save_settings()
         self.engine = None
-        self.output_text.setText(f"Settings saved to {self._settings_path.name}.")
+        self._set_output_content(f"Settings saved to {self._settings_path.name}.", status=True)
 
     def _on_toggle_separate(self, separate: bool) -> None:
         self.use_separate = separate
@@ -559,6 +660,11 @@ class MarkItDownApp(QMainWindow):
         self.tess_lang_input.setText(self.settings.get("tesseractLang", "deu+eng"))
         self.model_input.setCurrentText(self.settings.get("modelName", ""))
         self.prompt_input.setPlainText(self.settings.get("promptOverride", ""))
+        output_mode = self.settings.get("outputViewMode", "raw")
+        output_mode_index = self.output_mode_combo.findData(output_mode)
+        self.output_mode_combo.blockSignals(True)
+        self.output_mode_combo.setCurrentIndex(output_mode_index if output_mode_index >= 0 else 0)
+        self.output_mode_combo.blockSignals(False)
         self.sync_label.setText(self._sync_description())
         self._update_subgroup_visibility()
 
@@ -568,18 +674,22 @@ class MarkItDownApp(QMainWindow):
             self.session_file.remember(file_path)
             self.last_file_label.setText(f"Last selected file: {self.session_file.last_file_path}")
             self.start_conversion_btn.setEnabled(True)
-            self.output_text.clear()
+            self._set_output_content("", file_path, status=True)
 
     def _on_start_conversion(self) -> None:
         file_path = self.session_file.last_file_path
         if not file_path:
-            self.output_text.setPlainText("Select a file before starting the conversion.")
+            self._set_output_content("Select a file before starting the conversion.", status=True)
             return
         self._convert(file_path)
 
     def _convert(self, file_path: str) -> None:
         try:
-            self.output_text.setPlainText(f"Converting {Path(file_path).name}…")
+            self._set_output_content(
+                f"Converting {Path(file_path).name}…",
+                file_path,
+                status=True,
+            )
             QApplication.processEvents()
             self._collect_from_ui()
             enabled_generators = _build_enabled_generators(self.settings)
@@ -607,11 +717,11 @@ class MarkItDownApp(QMainWindow):
             if not result or not result.strip():
                 raise RuntimeError("No text extracted. Check the enabled methods and OCR settings.")
             if result.lstrip().startswith("Error:"):
-                self.output_text.setPlainText(result.strip())
+                self._set_output_content(result.strip(), file_path, status=True)
                 return
-            self.output_text.setPlainText(result)
+            self._set_output_content(result, file_path)
         except Exception as exc:
-            self.output_text.setPlainText(format_conversion_error(file_path, exc))
+            self._set_output_content(format_conversion_error(file_path, exc), file_path, status=True)
 
 
 if __name__ == "__main__":

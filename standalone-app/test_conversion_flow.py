@@ -1,9 +1,13 @@
 """Exercise file selection, the real fallback chain, and the Qt output field."""
 
 import os
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QImage, QTextDocument
 
 
 class ConversionFlowTests(unittest.TestCase):
@@ -77,6 +81,48 @@ class ConversionFlowTests(unittest.TestCase):
         with patch.object(self.main.ConversionEngine, "convert", return_value="<div>OCR text</div>"):
             self.window._convert("input.png")
         self.assertEqual(self.window.output_text.toPlainText(), "<div>OCR text</div>")
+
+    def test_rendered_view_formats_markdown_and_raw_view_restores_source(self):
+        markdown = "# Heading\n\n**bold** and [link](https://example.com)"
+        with patch.object(self.main.ConversionEngine, "convert", return_value=markdown):
+            self.window._convert("input.md")
+
+        self.window.output_mode_combo.setCurrentIndex(
+            self.window.output_mode_combo.findData("rendered")
+        )
+        rendered = self.window.output_text.toHtml()
+        self.assertIn("Heading", rendered)
+        self.assertIn("font-weight", rendered)
+        self.assertNotIn("# Heading", rendered)
+
+        self.window.output_mode_combo.setCurrentIndex(
+            self.window.output_mode_combo.findData("raw")
+        )
+        self.assertEqual(self.window.output_text.toPlainText(), markdown)
+
+    def test_rendered_view_loads_relative_local_images(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "image.png"
+            image = QImage(2, 2, QImage.Format.Format_ARGB32)
+            image.fill(0xFF00FF00)
+            self.assertTrue(image.save(str(image_path)))
+
+            self.window.settings["outputViewMode"] = "rendered"
+            self.window._set_output_content(
+                "![image](image.png)",
+                str(Path(temp_dir) / "input.pdf"),
+            )
+            loaded = self.window.output_document.loadResource(
+                QTextDocument.ResourceType.ImageResource,
+                QUrl("image.png"),
+            )
+
+            self.assertFalse(loaded.isNull())
+
+    def test_status_messages_stay_literal_in_rendered_mode(self):
+        self.window.settings["outputViewMode"] = "rendered"
+        self.window._set_output_content("<div>Setup failed</div>", status=True)
+        self.assertEqual(self.window.output_text.toPlainText(), "<div>Setup failed</div>")
 
 
 if __name__ == "__main__":
