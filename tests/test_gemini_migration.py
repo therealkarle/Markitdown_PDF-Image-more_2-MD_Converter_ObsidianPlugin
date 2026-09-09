@@ -149,6 +149,30 @@ class GeminiMigrationTests(unittest.TestCase):
         self.assertIn("translations", prompt)
         self.assertIn("Preserve headings and labels", prompt)
 
+    def test_default_direct_prompt_is_transcription_only(self):
+        prompt = self.module.ConversionEngine._default_gemini_image_prompt()
+        self.assertIn("Read the image itself", prompt)
+        self.assertIn("return only the text visibly present", prompt)
+        self.assertIn("Do not describe the image", prompt)
+        self.assertIn("Do not summarize, interpret, or translate", prompt)
+
+    def test_gemini_503_uses_ui_supported_model_fallbacks(self):
+        engine = self.module.ConversionEngine(model_name="gemini-3.1-flash-lite")
+
+        self.assertEqual(
+            engine._gemini_model_candidates(engine.model_name),
+            [
+                "gemini-3.1-flash-lite",
+                "gemini-3.5-flash-lite",
+                "gemini-3.8-flash",
+                "gemini-3.7-flash",
+            ],
+        )
+
+        unavailable = RuntimeError("503 UNAVAILABLE")
+        self.assertTrue(engine._is_gemini_unavailable(unavailable))
+        self.assertFalse(engine._is_gemini_unavailable(RuntimeError("401 UNAUTHORIZED")))
+
     def test_markitdown_chat_completion_adapter_converts_image_messages(self):
         engine = _AdapterEngine()
         adapter = self.module._GeminiModelAdapter(

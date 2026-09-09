@@ -42,6 +42,15 @@ class ConversionFlowTests(unittest.TestCase):
         self.assertNotIn("Error:", output)
         self.assertEqual(self.window.session_file.last_file_path, file_path)
 
+    def test_ai_remains_a_fallback_when_auto_detect_is_enabled(self):
+        settings = dict(
+            self.main.DEFAULT_SETTINGS,
+            useMarkitdown=False,
+            useAi=True,
+            aiAutoDetect=True,
+        )
+        self.assertEqual(self.main._build_enabled_generators(settings), ["gemini"])
+
     def test_selecting_file_does_not_start_conversion_automatically(self):
         file_path = str(Path(__file__).parents[1] / "Testfiles" / "firefox_rSX6oGI9gX.png")
         with patch.object(self.main.QFileDialog, "getOpenFileName", return_value=(file_path, "")), \

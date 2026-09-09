@@ -246,9 +246,8 @@ class ConversionEngine:
         Gemini model to use.
 
     prompt_override : str
-        Custom system instruction for Gemini.  When empty the built-in
-        improvement prompt is used for ai_improve, and a detection prompt for
-        ai_auto_detect.
+        Custom system instruction for Gemini. When empty, built-in prompts are
+        used for image transcription, ai_improve, and ai_auto_detect.
 
     azure_ocr_key / azure_ocr_endpoint : str | None
         Azure Computer Vision credentials.
@@ -537,8 +536,9 @@ class ConversionEngine:
 
         client = genai.Client(api_key=self.api_key)
         try:
+            requested_model = model or self.model_name
             kwargs = {
-                "model": model or self.model_name,
+                "model": requested_model,
             }
             if system_instruction:
                 kwargs["config"] = genai_types.GenerateContentConfig(
@@ -547,12 +547,39 @@ class ConversionEngine:
             # Use the chat API for requests that may use automatic function
             # calling. The Gen AI SDK recommends Chat.send_message for AFC
             # instead of calling Models.generate_content directly.
-            chat = client.chats.create(**kwargs)
-            return chat.send_message(self._normalize_chat_message(contents))
+            message = self._normalize_chat_message(contents)
+            for candidate_model in self._gemini_model_candidates(requested_model):
+                kwargs["model"] = candidate_model
+                try:
+                    chat = client.chats.create(**kwargs)
+                    return chat.send_message(message)
+                except Exception as error:
+                    if not self._is_gemini_unavailable(error):
+                        raise
+            raise RuntimeError("Gemini models are temporarily unavailable.")
         finally:
             close = getattr(client, "close", None)
             if close:
                 close()
+
+    @staticmethod
+    def _gemini_model_candidates(requested_model):
+        """Return the selected model followed by UI-supported 503 fallbacks."""
+        candidates = [
+            requested_model,
+            "gemini-3.5-flash-lite",
+            "gemini-3.8-flash",
+            "gemini-3.7-flash",
+        ]
+        return list(dict.fromkeys(candidates))
+
+    @staticmethod
+    def _is_gemini_unavailable(error):
+        """Only retry a temporary Gemini service-unavailable response."""
+        return (
+            getattr(error, "code", None) == 503
+            or "503 UNAVAILABLE" in str(error).upper()
+        )
 
     @staticmethod
     def _normalize_chat_message(contents):
@@ -605,10 +632,26 @@ class ConversionEngine:
         """Run Gemini directly on the file (used as a generator in the chain)."""
         model = _GeminiModelAdapter(
             self,
-            system_instruction=self.prompt_override or None,
+            system_instruction=self.prompt_override or self._default_gemini_image_prompt(),
         )
         md = MarkItDown(llm_client=model, llm_model=self.model_name)
         return md.convert(file_path).text_content
+
+    @staticmethod
+    def _default_gemini_image_prompt() -> str:
+        """Instruct the vision model to transcribe visible source text only."""
+        return (
+            "You are a strict image-to-text OCR and Markdown transcription assistant. "
+            "Read the image itself and return only the text visibly present in the image, "
+            "formatted as clean, well-structured Markdown. "
+            "Preserve the original language, wording, names, numbers, punctuation, and meaning. "
+            "Preserve visible headings, labels, paragraphs, lists, links, bold, italics, quotes, "
+            "and other formatting using Markdown where supported by the image. "
+            "Correct only obvious OCR errors. Do not describe the image, its interface, layout, "
+            "colors, icons, or context. Do not summarize, interpret, or translate the text. "
+            "Do not add titles, labels, explanations, metadata, or invented content. "
+            "Output only the final Markdown transcription."
+        )
 
     def _run_gemini_improve(self, text: str) -> str:
         """Post-process extracted text with Gemini to improve quality."""

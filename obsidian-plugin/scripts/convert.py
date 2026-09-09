@@ -19,8 +19,10 @@ def _build_enabled_generators(s: dict) -> list[str]:
             ):
                 result.append(eid)
         elif block == "ai" and s.get("useAi", False):
-            if not s.get("aiImprove", False) and not s.get("aiAutoDetect", False):
-                result.append("gemini")
+            # Keep Gemini in the fallback chain even when auto-detect or
+            # post-processing is enabled. Both modes still need a direct AI
+            # fallback when MarkItDown/OCR produce no text.
+            result.append("gemini")
     return result or ["markitdown"]
 
 
