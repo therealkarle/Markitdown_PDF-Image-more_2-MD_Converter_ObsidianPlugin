@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "build": "tsc && npm run bundle-engine",
-    "bundle-engine": "powershell -NoProfile -Command \"New-Item -ItemType Directory -Force scripts/engine | Out-Null; Copy-Item -Recurse -Force ../engine/* scripts/engine/\"",
+    "bundle-engine": "powershell -NoProfile -Command \"New-Item -ItemType Directory -Force scripts/engine | Out-Null; Get-ChildItem ../engine -File | Copy-Item -Destination scripts/engine -Force\"",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

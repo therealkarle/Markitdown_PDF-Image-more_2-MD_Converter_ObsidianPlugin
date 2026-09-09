@@ -88,7 +88,14 @@ export default class MarkItDownPlugin extends Plugin {
         if (!activeFile) { new Notice('No active file to convert.'); return; }
 
         try {
-            new Notice('Converting file…');
+            const aiOnly = this.settings.useAi && !this.settings.useMarkitdown && !this.settings.useOcr;
+            if (aiOnly && this.settings.geminiApiKey) {
+                new Notice(`Converting with Google Gemini API (${this.settings.modelName})…`);
+            } else if (aiOnly) {
+                new Notice('AI-only conversion selected, but no Gemini API key is configured.');
+            } else {
+                new Notice('Converting file…');
+            }
             const scriptPath = path.join(__dirname, '..', 'scripts', 'convert.py');
 
             const options: ConversionOptions = {

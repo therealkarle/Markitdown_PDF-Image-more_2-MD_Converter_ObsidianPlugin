@@ -1,4 +1,6 @@
 import sys
+import os
+import tempfile
 import types
 import unittest
 from importlib import import_module
@@ -166,6 +168,45 @@ class GeminiMigrationTests(unittest.TestCase):
             ),
             "# The Real Karle\n\nText",
         )
+
+    def test_direct_gemini_reads_the_source_without_markitdown(self):
+        engine = self.module.ConversionEngine(
+            enabled_generators=["gemini"],
+            api_key="test-key",
+        )
+        captured = {}
+
+        def fake_generate(contents, system_instruction=None, model=None):
+            captured["contents"] = contents
+            return _FakeResponse("AI transcription")
+
+        engine._generate_gemini_content = fake_generate
+        fd, source_path = tempfile.mkstemp(suffix=".pdf")
+        try:
+            with os.fdopen(fd, "wb") as source:
+                source.write(b"pdf source bytes")
+            self.assertEqual(engine._run_gemini_direct(source_path), "AI transcription")
+        finally:
+            os.unlink(source_path)
+
+        self.assertEqual(captured["contents"][0]["mime_type"], "application/pdf")
+        self.assertEqual(captured["contents"][0]["data"], b"pdf source bytes")
+
+    def test_auto_detect_cannot_enable_a_disabled_generator(self):
+        engine = self.module.ConversionEngine(
+            enabled_generators=["gemini"],
+            ai_auto_detect=True,
+        )
+        calls = []
+        engine._run_gemini_auto_detect = lambda _path: "markitdown"
+
+        def fake_run_generator(generator, _path):
+            calls.append(generator)
+            return "AI transcription"
+
+        engine._run_generator = fake_run_generator
+        self.assertEqual(engine.convert("document.pdf"), "AI transcription")
+        self.assertEqual(calls, ["gemini"])
 
     def test_gemini_503_uses_ui_supported_model_fallbacks(self):
         engine = self.module.ConversionEngine(model_name="gemini-3.1-flash-lite")

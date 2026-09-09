@@ -23,15 +23,25 @@ def _build_enabled_generators(s: dict) -> list[str]:
             # post-processing is enabled. Both modes still need a direct AI
             # fallback when MarkItDown/OCR produce no text.
             result.append("gemini")
-    return result or ["markitdown"]
+    # An empty result means that the user disabled every block. Do not silently
+    # re-enable MarkItDown in that case.
+    return result
 
 
 def convert_file(file_path: str, s: dict) -> str:
     """Convert a file or raise when the engine reports a failed conversion."""
 
     use_ai = s.get("useAi", False)
+    enabled_generators = _build_enabled_generators(s)
+    print(
+        "[MarkItDown Pro] generators="
+        + ",".join(enabled_generators or ["none"])
+        + "; Gemini API key="
+        + ("configured" if s.get("geminiApiKey") else "missing"),
+        file=sys.stderr,
+    )
     engine = ConversionEngine(
-        enabled_generators=_build_enabled_generators(s),
+        enabled_generators=enabled_generators,
         ai_improve=use_ai and s.get("aiImprove", False),
         ai_auto_detect=use_ai and s.get("aiAutoDetect", False),
         api_key=s.get("geminiApiKey") or None,

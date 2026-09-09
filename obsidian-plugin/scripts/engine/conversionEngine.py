@@ -275,7 +275,12 @@ class ConversionEngine:
         tesseract_cmd: str | None = None,
     ):
         load_dotenv()
-        self.enabled_generators = enabled_generators or ["markitdown"]
+        # Preserve an explicitly empty list. It represents a configuration
+        # where every generator was disabled; only omitted configuration gets
+        # the historical MarkItDown default.
+        self.enabled_generators = (
+            ["markitdown"] if enabled_generators is None else list(enabled_generators)
+        )
         self.ai_improve = ai_improve
         self.ai_auto_detect = ai_auto_detect
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
@@ -629,15 +634,17 @@ class ConversionEngine:
         return normalized[0] if len(normalized) == 1 else normalized
 
     def _run_gemini_direct(self, file_path: str) -> str:
-        """Run Gemini directly on the file (used as a generator in the chain)."""
-        model = _GeminiModelAdapter(
-            self,
+        """Run Gemini directly on the source file, without MarkItDown."""
+        import mimetypes
+
+        with open(file_path, "rb") as file:
+            file_bytes = file.read()
+        mime_type, _ = mimetypes.guess_type(file_path)
+        response = self._generate_gemini_content(
+            [{"mime_type": mime_type or "application/octet-stream", "data": file_bytes}],
             system_instruction=self.prompt_override or self._default_gemini_image_prompt(),
         )
-        md = MarkItDown(llm_client=model, llm_model=self.model_name)
-        return self._strip_markitdown_description_heading(
-            md.convert(file_path).text_content
-        )
+        return response.text
 
     @staticmethod
     def _strip_markitdown_description_heading(text: str) -> str:
@@ -779,9 +786,9 @@ class ConversionEngine:
                 if detected and detected in chain:
                     # Move detected generator to the front
                     chain = [detected] + [g for g in chain if g != detected]
-                elif detected and detected not in chain:
-                    # Detected method is not enabled — prepend it anyway
-                    chain = [detected] + chain
+                # Never run a method that is not enabled. In particular, AI
+                # auto-detect may recommend MarkItDown for a text PDF while
+                # the user intentionally selected AI only.
             except Exception as e:
                 errors.append(f"ai_auto_detect: {e}")
 

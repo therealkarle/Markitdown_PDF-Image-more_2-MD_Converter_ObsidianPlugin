@@ -84,7 +84,9 @@ def _build_enabled_generators(s: dict) -> list[str]:
             # post-processing is enabled. Both modes still need a direct AI
             # fallback when MarkItDown/OCR produce no text.
             result.append("gemini")
-    return result or ["markitdown"]
+    # An empty result means that the user disabled every block. Do not silently
+    # re-enable MarkItDown in that case.
+    return result
 
 
 # ─── Main window ──────────────────────────────────────────────────────────────
