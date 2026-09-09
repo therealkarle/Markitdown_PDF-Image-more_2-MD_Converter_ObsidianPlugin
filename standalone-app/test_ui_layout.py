@@ -36,3 +36,12 @@ def test_standalone_settings_use_scrollable_content() -> None:
     assert "settings_scroll = QScrollArea()" in settings_ui
     assert "settings_scroll.setWidgetResizable(True)" in settings_ui
     assert "settings_scroll.setWidget(settings_content)" in settings_ui
+
+
+def test_ocr_subengines_are_shown_without_an_inner_scrollbar() -> None:
+    settings_ui = _settings_ui_source()
+
+    assert "self.ocr_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)" in settings_ui
+    assert "self._fit_ocr_list_height()" in SOURCE
+    assert "def _fit_ocr_list_height" in SOURCE
+    assert "row_height = self.ocr_list.sizeHintForRow(0)" in SOURCE

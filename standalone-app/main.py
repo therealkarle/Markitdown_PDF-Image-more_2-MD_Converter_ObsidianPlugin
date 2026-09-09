@@ -216,7 +216,7 @@ class MarkItDownApp(QMainWindow):
 
         self.ocr_list = QListWidget()
         self.ocr_list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
-        self.ocr_list.setFixedHeight(80)
+        self.ocr_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._populate_ocr_list(self.settings.get("ocrPriority", OCR_ENGINE_IDS))
         ocr_row_lay.addWidget(self.ocr_list)
 
@@ -389,6 +389,18 @@ class MarkItDownApp(QMainWindow):
                 item.setData(Qt.ItemDataRole.UserRole, eid)
                 item.setCheckState(Qt.CheckState.Unchecked)
                 self.ocr_list.addItem(item)
+        self._fit_ocr_list_height()
+
+    def _fit_ocr_list_height(self) -> None:
+        if self.ocr_list.count() == 0:
+            self.ocr_list.setFixedHeight(0)
+            return
+
+        row_height = self.ocr_list.sizeHintForRow(0)
+        if row_height <= 0:
+            row_height = self.ocr_list.fontMetrics().height() + 4
+        frame_height = 2 * self.ocr_list.frameWidth()
+        self.ocr_list.setFixedHeight(row_height * self.ocr_list.count() + frame_height)
 
     def _ocr_priority_value(self) -> list[str]:
         result = []
