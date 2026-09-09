@@ -29,6 +29,13 @@ export default class MarkItDownPlugin extends Plugin {
     async loadSettings() {
         const data = await this.loadData();
         this.settings = { ...DEFAULT_SETTINGS, ...data };
+        const configuredPriority = Array.isArray(data?.ocrPriority)
+            ? data.ocrPriority
+            : DEFAULT_SETTINGS.ocrPriority;
+        this.settings.ocrPriority = Array.from(new Set([
+            ...configuredPriority,
+            ...DEFAULT_SETTINGS.ocrPriority,
+        ])) as OcrEngine[];
     }
 
     async saveSettings() {
@@ -45,6 +52,8 @@ export default class MarkItDownPlugin extends Plugin {
                 `GEMINI_API_KEY=${this.settings.geminiApiKey}`,
                 `AZURE_OCR_KEY=${this.settings.azureOcrKey}`,
                 `AZURE_OCR_ENDPOINT=${this.settings.azureOcrEndpoint}`,
+                `AZURE_DOCUMENT_INTELLIGENCE_KEY=${this.settings.azureDocumentIntelligenceKey}`,
+                `AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT=${this.settings.azureDocumentIntelligenceEndpoint}`,
             ].join('\n') + '\n';
             fs.mkdirSync(pluginDir, { recursive: true });
             fs.writeFileSync(envPath, content, 'utf8');
@@ -73,6 +82,8 @@ export default class MarkItDownPlugin extends Plugin {
                 geminiApiKey:    this.settings.geminiApiKey,
                 azureOcrKey:     this.settings.azureOcrKey,
                 azureOcrEndpoint: this.settings.azureOcrEndpoint,
+                azureDocumentIntelligenceKey: this.settings.azureDocumentIntelligenceKey,
+                azureDocumentIntelligenceEndpoint: this.settings.azureDocumentIntelligenceEndpoint,
                 tesseractLang:   this.settings.tesseractLang,
                 tesseractCmd:    this.settings.tesseractCmd,
                 modelName:       this.settings.modelName,
@@ -123,7 +134,7 @@ class MarkItDownSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName('Use OCR')
-            .setDesc('Tesseract / Azure Computer Vision / Windows OCR.')
+            .setDesc('Tesseract / Azure Computer Vision / Azure Document Intelligence / Windows OCR.')
             .addToggle(t => t.setValue(this.plugin.settings.useOcr)
                 .onChange(async v => {
                     this.plugin.settings.useOcr = v;
@@ -158,9 +169,9 @@ class MarkItDownSettingTab extends PluginSettingTab {
 
         new Setting(this.ocrSection)
             .setName('OCR sub-engine priority')
-            .setDesc('Comma-separated: tesseract, azure_ocr, win_ocr')
+            .setDesc('Comma-separated: tesseract, azure_ocr, azure_document_intelligence, win_ocr')
             .addText(t => t
-                .setPlaceholder('tesseract,azure_ocr')
+                .setPlaceholder('tesseract,azure_ocr,azure_document_intelligence')
                 .setValue(this.plugin.settings.ocrPriority.join(','))
                 .onChange(async v => {
                     this.plugin.settings.ocrPriority = v.split(',').map(s => s.trim()).filter(Boolean) as OcrEngine[];
@@ -181,17 +192,39 @@ class MarkItDownSettingTab extends PluginSettingTab {
                 .onChange(async v => { this.plugin.settings.tesseractCmd = v; await this.plugin.saveSettings(); }));
 
         new Setting(this.ocrSection)
-            .setName('Azure OCR Endpoint')
+            .setName('Azure Computer Vision Endpoint')
             .addText(t => t.setPlaceholder('https://<resource>.cognitiveservices.azure.com')
                 .setValue(this.plugin.settings.azureOcrEndpoint)
                 .onChange(async v => { this.plugin.settings.azureOcrEndpoint = v; await this.plugin.saveSettings(); }));
 
         new Setting(this.ocrSection)
-            .setName('Azure OCR Key')
+            .setName('Azure Computer Vision Key')
             .addText(t => {
                 t.inputEl.type = 'password';
                 t.setPlaceholder('Azure key…').setValue(this.plugin.settings.azureOcrKey)
                     .onChange(async v => { this.plugin.settings.azureOcrKey = v; await this.plugin.saveSettings(); });
+            });
+
+        new Setting(this.ocrSection)
+            .setName('Azure Document Intelligence Endpoint')
+            .setDesc('Endpoint of the Azure Document Intelligence resource used for OCR.')
+            .addText(t => t.setPlaceholder('https://<resource>.cognitiveservices.azure.com')
+                .setValue(this.plugin.settings.azureDocumentIntelligenceEndpoint)
+                .onChange(async v => {
+                    this.plugin.settings.azureDocumentIntelligenceEndpoint = v;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(this.ocrSection)
+            .setName('Azure Document Intelligence Key')
+            .addText(t => {
+                t.inputEl.type = 'password';
+                t.setPlaceholder('Document Intelligence key…')
+                    .setValue(this.plugin.settings.azureDocumentIntelligenceKey)
+                    .onChange(async v => {
+                        this.plugin.settings.azureDocumentIntelligenceKey = v;
+                        await this.plugin.saveSettings();
+                    });
             });
 
         // ── 3. AI section ─────────────────────────────────────────────────────

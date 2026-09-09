@@ -1,4 +1,4 @@
-export type OcrEngine = 'tesseract' | 'azure_ocr' | 'win_ocr';
+export type OcrEngine = 'tesseract' | 'azure_ocr' | 'azure_document_intelligence' | 'win_ocr';
 
 export interface PluginSettings {
     // method toggles
@@ -16,6 +16,8 @@ export interface PluginSettings {
     geminiApiKey: string;
     azureOcrKey: string;
     azureOcrEndpoint: string;
+    azureDocumentIntelligenceKey: string;
+    azureDocumentIntelligenceEndpoint: string;
     tesseractLang: string;
     tesseractCmd: string;
     modelName: string;
@@ -30,12 +32,14 @@ export const DEFAULT_SETTINGS: PluginSettings = {
     useOcr: false,
     useAi: false,
     blockPriority: ['markitdown', 'ocr', 'ai'],
-    ocrPriority: ['tesseract', 'azure_ocr'],
+    ocrPriority: ['tesseract', 'azure_ocr', 'azure_document_intelligence'],
     aiAutoDetect: false,
     aiImprove: false,
     geminiApiKey: '',
     azureOcrKey: '',
     azureOcrEndpoint: '',
+    azureDocumentIntelligenceKey: '',
+    azureDocumentIntelligenceEndpoint: '',
     tesseractLang: 'deu+eng',
     tesseractCmd: '',
     modelName: 'gemini-2.0-flash-lite-preview-02-05',

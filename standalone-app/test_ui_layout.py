@@ -21,7 +21,8 @@ def test_azure_key_is_requested_inside_the_ocr_section() -> None:
     ocr_source = settings_ui[ocr_start:ai_start]
 
     assert "self.azure_key_input = QLineEdit" in ocr_source
-    assert 'ocr_form.addRow("Azure OCR key:", self.azure_key_input)' in ocr_source
+    assert 'ocr_form.addRow("Azure Computer Vision key:", self.azure_key_input)' in ocr_source
+    assert "self.azure_di_key_input = QLineEdit" in ocr_source
 
 
 def test_standalone_settings_has_no_separate_azure_credentials_section() -> None:

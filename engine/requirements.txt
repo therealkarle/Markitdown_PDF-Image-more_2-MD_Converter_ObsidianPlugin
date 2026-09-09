@@ -4,8 +4,10 @@ python-dotenv
 # OCR dependencies (Tesseract itself is installed separately on the host)
 pdf2image
 Pillow
-# Azure OCR (optional, install for azure_ocr mode)
+# Azure Computer Vision OCR (optional, install for azure_ocr mode)
 azure-ai-vision-imageanalysis
+# Azure Document Intelligence OCR (optional, install for azure_document_intelligence mode)
+azure-ai-documentintelligence
 # Windows OCR (optional, Windows-only, install for win_ocr mode)
 winrt-Windows.Media.Ocr; sys_platform == "win32"
 winrt-Windows.Foundation; sys_platform == "win32"

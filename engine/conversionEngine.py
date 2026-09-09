@@ -5,7 +5,8 @@ Settings model
 --------------
 enabled_generators : list[str]
     Ordered list of active generator IDs that will be tried as a fallback chain.
-    Any subset of: "markitdown", "tesseract", "azure_ocr", "win_ocr", "gemini"
+    Any subset of: "markitdown", "tesseract", "azure_ocr",
+    "azure_document_intelligence", "win_ocr", "gemini"
 
 ai_improve : bool
     When True and "gemini" is in enabled_generators, Gemini runs as an *additional*
@@ -21,6 +22,8 @@ Generator IDs
 "markitdown"  — MarkItDown native (best for PDF, Word, HTML, …)
 "tesseract"   — Tesseract OCR  (requires the native system binary)
 "azure_ocr"   — Azure Computer Vision  (requires azure-ai-vision-imageanalysis + key/endpoint)
+"azure_document_intelligence" — Azure Document Intelligence OCR
+                    (requires azure-ai-documentintelligence + key/endpoint)
 "win_ocr"     — Windows.Media.Ocr  (Windows 10 1803+, requires winrt package)
 "gemini"      — Google Gemini  (requires google-genai + API key)
 """
@@ -52,6 +55,13 @@ try:
     AZURE_OCR_AVAILABLE = True
 except ImportError:
     AZURE_OCR_AVAILABLE = False
+
+try:
+    from azure.ai.documentintelligence import DocumentIntelligenceClient
+    from azure.core.credentials import AzureKeyCredential as DocumentIntelligenceKeyCredential
+    AZURE_DOCUMENT_INTELLIGENCE_AVAILABLE = True
+except ImportError:
+    AZURE_DOCUMENT_INTELLIGENCE_AVAILABLE = False
 
 WIN_OCR_AVAILABLE = False
 WIN_OCR_IMPORT_ERROR: Exception | None = None
@@ -243,6 +253,9 @@ class ConversionEngine:
     azure_ocr_key / azure_ocr_endpoint : str | None
         Azure Computer Vision credentials.
 
+    azure_document_intelligence_key / azure_document_intelligence_endpoint : str | None
+        Azure Document Intelligence credentials.
+
     tesseract_lang : str
         Tesseract language string, e.g. "deu+eng".
     """
@@ -257,6 +270,8 @@ class ConversionEngine:
         prompt_override: str = "",
         azure_ocr_key: str | None = None,
         azure_ocr_endpoint: str | None = None,
+        azure_document_intelligence_key: str | None = None,
+        azure_document_intelligence_endpoint: str | None = None,
         tesseract_lang: str = "deu+eng",
         tesseract_cmd: str | None = None,
     ):
@@ -272,6 +287,13 @@ class ConversionEngine:
         )
         self.azure_ocr_endpoint = self._clean_azure_value(
             azure_ocr_endpoint or os.getenv("AZURE_OCR_ENDPOINT")
+        ).rstrip("/")
+        self.azure_document_intelligence_key = self._clean_azure_value(
+            azure_document_intelligence_key or os.getenv("AZURE_DOCUMENT_INTELLIGENCE_KEY")
+        )
+        self.azure_document_intelligence_endpoint = self._clean_azure_value(
+            azure_document_intelligence_endpoint
+            or os.getenv("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT")
         ).rstrip("/")
         self.tesseract_lang = tesseract_lang
         self.tesseract_cmd = tesseract_cmd
@@ -409,6 +431,64 @@ class ConversionEngine:
             )
         return ""
 
+    def _run_azure_document_intelligence(self, file_path: str) -> str:
+        """Run Azure Document Intelligence's prebuilt-read model on a file."""
+        if not AZURE_DOCUMENT_INTELLIGENCE_AVAILABLE:
+            raise RuntimeError("azure-ai-documentintelligence is not installed.")
+        if (
+            not self.azure_document_intelligence_key
+            or not self.azure_document_intelligence_endpoint
+        ):
+            raise RuntimeError(
+                "Azure Document Intelligence key and endpoint must be configured."
+            )
+
+        client = DocumentIntelligenceClient(
+            endpoint=self.azure_document_intelligence_endpoint,
+            credential=DocumentIntelligenceKeyCredential(
+                self.azure_document_intelligence_key
+            ),
+        )
+        try:
+            with open(file_path, "rb") as file_handle:
+                try:
+                    poller = client.begin_analyze_document(
+                        "prebuilt-read", body=file_handle
+                    )
+                except TypeError:
+                    # Compatibility with SDK versions that still call the input
+                    # parameter ``analyze_request``.
+                    file_handle.seek(0)
+                    poller = client.begin_analyze_document(
+                        "prebuilt-read", analyze_request=file_handle
+                    )
+                result = poller.result()
+        except Exception as error:
+            if getattr(error, "status_code", None) == 401:
+                raise RuntimeError(
+                    "Azure Document Intelligence returned 401 for "
+                    f"{self.azure_document_intelligence_endpoint}. The key must "
+                    "belong to this exact Document Intelligence resource."
+                ) from error
+            raise
+        finally:
+            close = getattr(client, "close", None)
+            if close:
+                close()
+
+        content = getattr(result, "content", None)
+        if content:
+            return content.strip()
+
+        # Older SDK/API responses may not expose the top-level content field.
+        # Reconstruct the same reading order from page lines in that case.
+        pages = []
+        for page in getattr(result, "pages", None) or []:
+            lines = [line.content for line in (getattr(page, "lines", None) or [])]
+            if lines:
+                pages.append("\n".join(lines))
+        return "\n\n---\n\n".join(pages)
+
     def _run_win_ocr(self, file_path: str) -> str:
         if not WIN_OCR_AVAILABLE:
             detail = ""
@@ -511,11 +591,19 @@ class ConversionEngine:
             raise RuntimeError("No Gemini API key configured for AI auto-detect.")
         if not GENAI_AVAILABLE:
             raise RuntimeError("google-genai is not installed.")
-        valid = {"markitdown", "tesseract", "azure_ocr", "win_ocr", "gemini"}
+        valid = {
+            "markitdown",
+            "tesseract",
+            "azure_ocr",
+            "azure_document_intelligence",
+            "win_ocr",
+            "gemini",
+        }
         prompt = (
             "Look at the attached file. "
             "Based on its content type, respond with exactly one word — "
-            "the best extraction method: markitdown, tesseract, azure_ocr, win_ocr, or gemini. "
+            "the best extraction method: markitdown, tesseract, azure_ocr, "
+            "azure_document_intelligence, win_ocr, or gemini. "
             "Respond with only the method name, nothing else."
         )
         try:
@@ -543,6 +631,7 @@ class ConversionEngine:
             "markitdown": self._run_markitdown,
             "tesseract": self._run_tesseract,
             "azure_ocr": self._run_azure_ocr,
+            "azure_document_intelligence": self._run_azure_document_intelligence,
             "win_ocr": self._run_win_ocr,
             "gemini": self._run_gemini_direct,
         }

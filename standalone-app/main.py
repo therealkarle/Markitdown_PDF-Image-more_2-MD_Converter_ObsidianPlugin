@@ -22,6 +22,7 @@ from session_state import SessionFileState, format_conversion_error
 _OCR_ENGINES: list[tuple[str, str]] = [
     ("tesseract", "Tesseract  (local)"),
     ("azure_ocr", "Azure Computer Vision  (cloud)"),
+    ("azure_document_intelligence", "Azure Document Intelligence  (cloud)"),
 ]
 if platform.system() == "Windows":
     _OCR_ENGINES.append(("win_ocr", "Windows OCR  (local, Windows only)"))
@@ -44,7 +45,7 @@ DEFAULT_SETTINGS: dict = {
     # priority order of blocks: list of block-ids
     "blockPriority": ["markitdown", "ocr", "ai"],
     # OCR sub-engine priority (subset of OCR_ENGINE_IDS)
-    "ocrPriority":   ["tesseract", "azure_ocr"],
+    "ocrPriority":   ["tesseract", "azure_ocr", "azure_document_intelligence"],
     # AI extras
     "aiAutoDetect":  False,
     "aiImprove":     False,
@@ -52,6 +53,8 @@ DEFAULT_SETTINGS: dict = {
     "geminiApiKey":      "",
     "azureOcrKey":       "",
     "azureOcrEndpoint":  "",
+    "azureDocumentIntelligenceKey": "",
+    "azureDocumentIntelligenceEndpoint": "",
     "tesseractLang":     "deu+eng",
     "tesseractCmd":      "",
     "modelName":         "gemini-2.0-flash-lite-preview-02-05",
@@ -127,17 +130,24 @@ class MarkItDownApp(QMainWindow):
         s = dict(DEFAULT_SETTINGS)
         try:
             data = json.loads(self._settings_path.read_text("utf-8"))
-            for k in ("geminiApiKey", "azureOcrKey"):
+            for k in (
+                "geminiApiKey",
+                "azureOcrKey",
+                "azureDocumentIntelligenceKey",
+            ):
                 data.pop(k, None)
             s.update(data)
         except (OSError, json.JSONDecodeError):
             pass
         s["geminiApiKey"] = self._load_env_key("GEMINI_API_KEY")
         s["azureOcrKey"]  = self._load_env_key("AZURE_OCR_KEY")
+        s["azureDocumentIntelligenceKey"] = self._load_env_key(
+            "AZURE_DOCUMENT_INTELLIGENCE_KEY"
+        )
         return s
 
     def _save_settings(self) -> None:
-        skip = {"geminiApiKey", "azureOcrKey"}
+        skip = {"geminiApiKey", "azureOcrKey", "azureDocumentIntelligenceKey"}
         to_save = {k: v for k, v in self.settings.items() if k not in skip}
         try:
             self._settings_path.parent.mkdir(parents=True, exist_ok=True)
@@ -251,7 +261,22 @@ class MarkItDownApp(QMainWindow):
         self.azure_key_input = QLineEdit(self.settings.get("azureOcrKey", ""))
         self.azure_key_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.azure_key_input.setPlaceholderText("Required for Azure Computer Vision")
-        ocr_form.addRow("Azure OCR key:", self.azure_key_input)
+        ocr_form.addRow("Azure Computer Vision key:", self.azure_key_input)
+
+        self.azure_di_endpoint_input = QLineEdit(
+            self.settings.get("azureDocumentIntelligenceEndpoint", "")
+        )
+        self.azure_di_endpoint_input.setPlaceholderText(
+            "https://<resource>.cognitiveservices.azure.com"
+        )
+        ocr_form.addRow("Azure Document Intelligence endpoint:", self.azure_di_endpoint_input)
+
+        self.azure_di_key_input = QLineEdit(
+            self.settings.get("azureDocumentIntelligenceKey", "")
+        )
+        self.azure_di_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.azure_di_key_input.setPlaceholderText("Required for Azure Document Intelligence")
+        ocr_form.addRow("Azure Document Intelligence key:", self.azure_di_key_input)
 
         save_cred_btn = QPushButton("Save API Keys to .env")
         save_cred_btn.clicked.connect(self._on_save_credentials)
@@ -459,6 +484,8 @@ class MarkItDownApp(QMainWindow):
             "geminiApiKey":     self.gemini_key_input.text().strip(),
             "azureOcrKey":      self.azure_key_input.text().strip(),
             "azureOcrEndpoint": self.azure_endpoint_input.text().strip(),
+            "azureDocumentIntelligenceKey": self.azure_di_key_input.text().strip(),
+            "azureDocumentIntelligenceEndpoint": self.azure_di_endpoint_input.text().strip(),
             "tesseractLang":    self.tess_lang_input.text().strip(),
             "modelName":        self.model_input.currentText().strip(),
             "promptOverride":   self.prompt_input.toPlainText().strip(),
@@ -472,10 +499,13 @@ class MarkItDownApp(QMainWindow):
     def _on_save_credentials(self) -> None:
         gemini = self.gemini_key_input.text().strip()
         azure  = self.azure_key_input.text().strip()
+        azure_di = self.azure_di_key_input.text().strip()
         self._save_env_key("GEMINI_API_KEY", gemini)
         self._save_env_key("AZURE_OCR_KEY",  azure)
+        self._save_env_key("AZURE_DOCUMENT_INTELLIGENCE_KEY", azure_di)
         self.settings["geminiApiKey"] = gemini
         self.settings["azureOcrKey"]  = azure
+        self.settings["azureDocumentIntelligenceKey"] = azure_di
         self.engine = None
         self.output_text.setText("API keys saved to .env.")
 
@@ -501,6 +531,10 @@ class MarkItDownApp(QMainWindow):
         self.gemini_key_input.setText(self.settings.get("geminiApiKey", ""))
         self.azure_key_input.setText(self.settings.get("azureOcrKey", ""))
         self.azure_endpoint_input.setText(self.settings.get("azureOcrEndpoint", ""))
+        self.azure_di_key_input.setText(self.settings.get("azureDocumentIntelligenceKey", ""))
+        self.azure_di_endpoint_input.setText(
+            self.settings.get("azureDocumentIntelligenceEndpoint", "")
+        )
         self.tess_lang_input.setText(self.settings.get("tesseractLang", "deu+eng"))
         self.model_input.setCurrentText(self.settings.get("modelName", ""))
         self.prompt_input.setPlainText(self.settings.get("promptOverride", ""))
@@ -539,6 +573,12 @@ class MarkItDownApp(QMainWindow):
                 prompt_override=self.settings.get("promptOverride", ""),
                 azure_ocr_key=self.settings.get("azureOcrKey") or None,
                 azure_ocr_endpoint=self.settings.get("azureOcrEndpoint") or None,
+                azure_document_intelligence_key=self.settings.get(
+                    "azureDocumentIntelligenceKey"
+                ) or None,
+                azure_document_intelligence_endpoint=self.settings.get(
+                    "azureDocumentIntelligenceEndpoint"
+                ) or None,
                 tesseract_lang=self.settings.get("tesseractLang", "deu+eng"),
                 tesseract_cmd=self.settings.get("tesseractCmd") or None,
             )

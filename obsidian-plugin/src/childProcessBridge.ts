@@ -11,6 +11,8 @@ export interface ConversionOptions {
     geminiApiKey: string;
     azureOcrKey: string;
     azureOcrEndpoint: string;
+    azureDocumentIntelligenceKey: string;
+    azureDocumentIntelligenceEndpoint: string;
     tesseractLang: string;
     tesseractCmd: string;
     modelName: string;
