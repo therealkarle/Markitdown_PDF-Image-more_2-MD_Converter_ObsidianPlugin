@@ -635,7 +635,20 @@ class ConversionEngine:
             system_instruction=self.prompt_override or self._default_gemini_image_prompt(),
         )
         md = MarkItDown(llm_client=model, llm_model=self.model_name)
-        return md.convert(file_path).text_content
+        return self._strip_markitdown_description_heading(
+            md.convert(file_path).text_content
+        )
+
+    @staticmethod
+    def _strip_markitdown_description_heading(text: str) -> str:
+        """Remove MarkItDown's technical image-description wrapper heading."""
+        lines = text.splitlines()
+        for index, line in enumerate(lines):
+            if line.strip().casefold() == "# description:":
+                return "\n".join(lines[:index] + lines[index + 1:]).lstrip("\n")
+            if line.strip():
+                break
+        return text
 
     @staticmethod
     def _default_gemini_image_prompt() -> str:
@@ -645,11 +658,15 @@ class ConversionEngine:
             "Read the image itself and return only the text visibly present in the image, "
             "formatted as clean, well-structured Markdown. "
             "Preserve the original language, wording, names, numbers, punctuation, and meaning. "
-            "Preserve visible headings, labels, paragraphs, lists, links, bold, italics, quotes, "
-            "and other formatting using Markdown where supported by the image. "
+            "Convert visual hierarchy into Markdown: use # for the main title and ## for a section heading "
+            "only when that hierarchy is clearly visible. If it is not clearly a heading, use **bold** "
+            "for the label instead. Use normal paragraphs for body text. Preserve visible labels, lists, "
+            "links, bold, italics, quotes, and other formatting using Markdown where supported by the image. "
             "Correct only obvious OCR errors. Do not describe the image, its interface, layout, "
             "colors, icons, or context. Do not summarize, interpret, or translate the text. "
-            "Do not add titles, labels, explanations, metadata, or invented content. "
+            "Never output AI-analysis labels such as Description, Translation, Content details, "
+            "Body Text, Title, Heading, or Overall. Keep a label such as Beschreibung only when it is "
+            "actually visible in the image. Do not add titles, labels, explanations, metadata, or invented content. "
             "Output only the final Markdown transcription."
         )
 
@@ -666,11 +683,13 @@ class ConversionEngine:
                 "Return only the clean source text from the input as well-structured Markdown. "
                 "Preserve the source language, wording, names, numbers, punctuation, meaning, "
                 "and all clearly supported formatting such as headings, paragraphs, lists, "
-                "tables, links, bold, italics, quotes, code, and captions. "
+                "tables, links, bold, italics, quotes, code, and captions. Convert a clearly visible main title "
+                "to # and a clearly visible section heading to ##; otherwise use **bold** for the label. "
                 "Correct only obvious OCR errors and restore formatting that is supported by the source. "
                 "The input may contain an AI-generated image description: discard that meta-description, "
-                "summaries, interpretations, and translations. Preserve headings and labels that are visibly "
-                "part of the source itself, including labels such as Beschreibung or Description. "
+                "summaries, interpretations, translations, and AI-analysis labels such as Description, "
+                "Translation, Content details, Body Text, Title, Heading, or Overall. Preserve headings and "
+                "labels that are visibly part of the source itself, such as Beschreibung. "
                 "Do not add explanations, commentary, metadata, or invented content. "
                 "Output only the final Markdown."
             )

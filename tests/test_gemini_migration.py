@@ -155,6 +155,17 @@ class GeminiMigrationTests(unittest.TestCase):
         self.assertIn("return only the text visibly present", prompt)
         self.assertIn("Do not describe the image", prompt)
         self.assertIn("Do not summarize, interpret, or translate", prompt)
+        self.assertIn("Never output AI-analysis labels such as Description", prompt)
+        self.assertIn("only when that hierarchy is clearly visible", prompt)
+        self.assertIn("use **bold** for the label instead", prompt)
+
+    def test_markitdown_description_wrapper_is_removed(self):
+        self.assertEqual(
+            self.module.ConversionEngine._strip_markitdown_description_heading(
+                "# Description:\n# The Real Karle\n\nText"
+            ),
+            "# The Real Karle\n\nText",
+        )
 
     def test_gemini_503_uses_ui_supported_model_fallbacks(self):
         engine = self.module.ConversionEngine(model_name="gemini-3.1-flash-lite")
